@@ -1,0 +1,13 @@
+{
+  "name": "cns",
+  "owner": {
+    "name": "James Gao"
+  },
+  "plugins": [
+    {
+      "name": "cns",
+      "source": ".",
+      "description": "Central Nervous System — atomized strategic bets with conflict detection. /cns, /cns-bootstrap, /cns-detect, /spar."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "cns",
+  "description": "Central Nervous System: atomized strategic bets with automated conflict detection for markdown vaults. Ships /cns, /cns-bootstrap, /cns-detect, and /spar skills.",
+  "version": "0.1.0",
+  "author": {
+    "name": "James Gao"
+  },
+  "homepage": "https://github.com/Jamesjg2/cns",
+  "repository": "https://github.com/Jamesjg2/cns",
+  "license": "MIT"
+}

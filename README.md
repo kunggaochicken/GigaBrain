@@ -12,9 +12,23 @@ Strategic state drifts. The strategy doc you wrote in March doesn't agree with t
 
 ## Quick start
 
-```bash
-pip install cns
+**Install the Claude Code plugin** (gets you the `/cns`, `/cns-bootstrap`, `/cns-detect`, `/spar` skills):
 
+```
+/plugin marketplace add Jamesjg2/cns
+/plugin install cns@cns
+```
+
+**Install the Python CLI** (gets you `cns bootstrap | reindex | detect | validate`):
+
+```bash
+pip install git+https://github.com/Jamesjg2/cns.git
+# (PyPI release coming in v0.2)
+```
+
+**First-run flow:**
+
+```bash
 # In your vault:
 cd path/to/your/vault
 cns bootstrap              # create .cns/config.yaml with default settings
@@ -33,7 +47,7 @@ cns detect
 /spar
 ```
 
-For interactive setup with a config wizard, use the `/cns-bootstrap` Claude Code skill instead.
+For interactive setup with a config wizard (instead of `cns bootstrap`'s defaults), use the `/cns-bootstrap` Claude Code skill.
 
 Full walkthrough: [docs/getting-started.md](docs/getting-started.md)
 
