@@ -19,12 +19,12 @@ from pathlib import Path
 from cns.models import Conflict, RoleSpec
 
 
-def make_conflict_id(slug: str, when: date) -> str:
-    return f"C-{when.isoformat()}-{slug}"
+def make_conflict_id(slug: str) -> str:
+    return f"C-{slug}"
 
 
 _CONFLICT_HEADER = re.compile(
-    r"^### (C-(\d{4}-\d{2}-\d{2})-[^\s]+) \(\d+ days? open\)\s*$",
+    r"^### (C-[^\s]+) \(\d+ days? open\)\s*$",
     re.MULTILINE,
 )
 
@@ -35,15 +35,22 @@ def parse_conflicts_file(path: Path) -> list[Conflict]:
     text = path.read_text(encoding="utf-8")
     out: list[Conflict] = []
 
-    role_sections = re.split(r"^## ([^\n]+)$", text, flags=re.MULTILINE)
-    # role_sections = [preamble, role_name1, body1, role_name2, body2, ...]
-    for i in range(1, len(role_sections), 2):
-        role_name = role_sections[i].strip()
-        body = role_sections[i + 1]
-        owner = _role_name_to_id(role_name)
+    role_sections = re.split(r"^## [^\n]+$", text, flags=re.MULTILINE)
+    role_headers = re.findall(r"^## [^\n]+$", text, flags=re.MULTILINE)
+    # role_sections = [preamble, body1, body2, ...]
+    # role_headers = [header1, header2, ...]
+    for i, body in enumerate(role_sections[1:]):
+        header = role_headers[i]
+        id_match = re.search(r"\(([^)]+)\)\s*$", header)
+        if id_match:
+            role_id = id_match.group(1)
+            owner = "" if role_id == "_unassigned_" else role_id
+        else:
+            # legacy format: best-effort name-to-id
+            role_name = header.lstrip("# ").strip()
+            owner = _role_name_to_id(role_name)
         for m in _CONFLICT_HEADER.finditer(body):
             cid = m.group(1)
-            detected = date.fromisoformat(m.group(2))
             block_start = m.end()
             next_match = _CONFLICT_HEADER.search(body, block_start)
             block_end = next_match.start() if next_match else len(body)
@@ -51,6 +58,8 @@ def parse_conflicts_file(path: Path) -> list[Conflict]:
             bet_file = _extract(block, r"\*\*Bet:\*\*\s*\[\[([^\]]+)\]\]")
             trigger = _extract(block, r"\*\*Trigger:\*\*\s*(.+?)(?:\n|$)")
             note = _extract(block, r"\*\*Detector note:\*\*\s*(.+?)(?:\n|$)") or ""
+            first_detected_raw = _extract(block, r"\*\*First detected:\*\*\s*(\d{4}-\d{2}-\d{2})")
+            detected = date.fromisoformat(first_detected_raw) if first_detected_raw else date.today()
             if bet_file and not bet_file.endswith(".md"):
                 bet_file += ".md"
             out.append(Conflict(
@@ -85,11 +94,12 @@ def render_conflicts_file(
         items = sorted(by_role[role.id], key=lambda c: c.first_detected)
         if not items:
             continue
-        lines.append(f"## {role.name}")
+        lines.append(f"## {role.name} ({role.id})")
         for c in items:
             n = c.days_open(today)
             unit = "day" if n == 1 else "days"
             lines.append(f"### {c.id} ({n} {unit} open)")
+            lines.append(f"- **First detected:** {c.first_detected.isoformat()}")
             stem = c.bet_file.removesuffix(".md")
             lines.append(f"- **Bet:** [[{stem}]]")
             lines.append(f"- **Trigger:** {c.trigger}")
@@ -97,11 +107,12 @@ def render_conflicts_file(
                 lines.append(f"- **Detector note:** {c.detector_note}")
             lines.append("")
     if unassigned:
-        lines.append("## Unassigned (unknown role)")
+        lines.append("## Unassigned (_unassigned_)")
         for c in sorted(unassigned, key=lambda c: c.first_detected):
             n = c.days_open(today)
             unit = "day" if n == 1 else "days"
             lines.append(f"### {c.id} ({n} {unit} open)")
+            lines.append(f"- **First detected:** {c.first_detected.isoformat()}")
             stem = c.bet_file.removesuffix(".md")
             lines.append(f"- **Bet:** [[{stem}]]")
             lines.append(f"- **Trigger:** {c.trigger}")

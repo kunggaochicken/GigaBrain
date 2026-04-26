@@ -99,7 +99,7 @@ def detect_conflicts(
 def _make(slug: str, bet_file: str, owner: str, today: date,
           trigger: str, note: str) -> Conflict:
     return Conflict(
-        id=make_conflict_id(slug, today),
+        id=make_conflict_id(slug),
         bet_file=bet_file, owner=owner,
         trigger=trigger, detector_note=note,
         first_detected=today,
