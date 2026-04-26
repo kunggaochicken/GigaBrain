@@ -4,11 +4,13 @@ Bet files are markdown with YAML frontmatter. Body is a fixed set of H2 sections
 """
 
 from __future__ import annotations
+
 import re
 from pathlib import Path
-from typing import Optional
+
 import frontmatter
 import yaml
+
 from cns.models import Bet, BetStatus
 
 SECTION_HEADERS = [
@@ -49,10 +51,7 @@ def load_bet(path: Path) -> Bet:
 
 def write_bet(path: Path, bet: Bet) -> None:
     """Serialize a Bet model to disk as frontmatter + sectioned markdown."""
-    fm_fields = {
-        k: v for k, v in bet.model_dump(mode="json").items()
-        if not k.startswith("body_")
-    }
+    fm_fields = {k: v for k, v in bet.model_dump(mode="json").items() if not k.startswith("body_")}
     body_parts: list[str] = []
     canonical_titles = {
         "body_the_bet": "The bet",
@@ -72,7 +71,7 @@ def write_bet(path: Path, bet: Bet) -> None:
     path.write_text(f"---\n{fm_yaml}\n---\n\n{body}", encoding="utf-8")
 
 
-def list_bets(bets_dir: Path, status: Optional[BetStatus] = None) -> list[Bet]:
+def list_bets(bets_dir: Path, status: BetStatus | None = None) -> list[Bet]:
     """List bets in the directory, optionally filtered by status."""
     out: list[Bet] = []
     for path in sorted(bets_dir.glob("bet_*.md")):

@@ -1,10 +1,11 @@
 """Signal source loaders. A signal is a piece of recent text the detector compares to bets."""
 
 from __future__ import annotations
+
 import json as _json
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -29,9 +30,18 @@ class VaultDirSignal:
             return []
         try:
             result = subprocess.run(
-                ["git", "log", f"--since={window_hours} hours ago",
-                 "--name-only", "--pretty=format:", "--", self.path],
-                cwd=vault_root, capture_output=True, text=True,
+                [
+                    "git",
+                    "log",
+                    f"--since={window_hours} hours ago",
+                    "--name-only",
+                    "--pretty=format:",
+                    "--",
+                    self.path,
+                ],
+                cwd=vault_root,
+                capture_output=True,
+                text=True,
             )
         except FileNotFoundError:
             return []
@@ -65,9 +75,15 @@ class GitCommitsSignal:
                 continue
             try:
                 result = subprocess.run(
-                    ["git", "log", f"--since={window_hours} hours ago",
-                     "--pretty=format:%H%x00%s%x00%b%x1e"],
-                    cwd=repo_path, capture_output=True, text=True,
+                    [
+                        "git",
+                        "log",
+                        f"--since={window_hours} hours ago",
+                        "--pretty=format:%H%x00%s%x00%b%x1e",
+                    ],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
                 )
             except FileNotFoundError:
                 continue
@@ -83,10 +99,12 @@ class GitCommitsSignal:
                 sha = parts[0][:7]
                 subject = parts[1]
                 body = parts[2] if len(parts) > 2 else ""
-                signals.append(Signal(
-                    source=f"git:{rel}#{sha}",
-                    content=f"{subject}\n\n{body}".strip(),
-                ))
+                signals.append(
+                    Signal(
+                        source=f"git:{rel}#{sha}",
+                        content=f"{subject}\n\n{body}".strip(),
+                    )
+                )
         return signals
 
 
@@ -96,15 +114,26 @@ class GitHubPRsSignal:
     auth: str = "gh_cli"
 
     def collect(self, vault_root: Path, window_hours: int) -> list[Signal]:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=window_hours)
         signals: list[Signal] = []
         for repo in self.repos:
             try:
                 result = subprocess.run(
-                    ["gh", "pr", "list", "--repo", repo, "--state", "merged",
-                     "--limit", "50",
-                     "--json", "number,title,body,mergedAt"],
-                    capture_output=True, text=True,
+                    [
+                        "gh",
+                        "pr",
+                        "list",
+                        "--repo",
+                        repo,
+                        "--state",
+                        "merged",
+                        "--limit",
+                        "50",
+                        "--json",
+                        "number,title,body,mergedAt",
+                    ],
+                    capture_output=True,
+                    text=True,
                 )
             except FileNotFoundError:
                 continue
@@ -122,8 +151,10 @@ class GitHubPRsSignal:
                 if merged_at < cutoff:
                     continue
                 content = f"{pr['title']}\n\n{pr.get('body') or ''}".strip()
-                signals.append(Signal(
-                    source=f"github:{repo}#{pr['number']}",
-                    content=content,
-                ))
+                signals.append(
+                    Signal(
+                        source=f"github:{repo}#{pr['number']}",
+                        content=content,
+                    )
+                )
         return signals

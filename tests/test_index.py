@@ -1,15 +1,22 @@
 from datetime import date
+
 from cns.index import render_bets_index
 from cns.models import Bet, BetStatus, RoleSpec
 
+
 def _bet(name, owner, slug):
     return Bet(
-        name=name, description=f"desc for {name}",
-        status=BetStatus.ACTIVE, owner=owner,
-        horizon="this-quarter", confidence="medium",
-        created=date(2026, 4, 25), last_reviewed=date(2026, 4, 25),
+        name=name,
+        description=f"desc for {name}",
+        status=BetStatus.ACTIVE,
+        owner=owner,
+        horizon="this-quarter",
+        confidence="medium",
+        created=date(2026, 4, 25),
+        last_reviewed=date(2026, 4, 25),
         kill_criteria="unspecified — needs sparring",
     )
+
 
 def test_render_groups_by_owner_and_orders_by_role_config():
     bets_with_paths = [
@@ -27,12 +34,14 @@ def test_render_groups_by_owner_and_orders_by_role_config():
     # Each bet shows description
     assert "desc for Bet A" in out
 
+
 def test_render_omits_empty_role_sections():
     bets = [(_bet("Solo", "ceo", "bet_solo"), "bet_solo.md")]
     roles = [RoleSpec(id="ceo", name="CEO"), RoleSpec(id="cto", name="CTO")]
     out = render_bets_index(bets, roles)
     assert "## CEO" in out
     assert "## CTO" not in out
+
 
 def test_render_unknown_owner_goes_to_unassigned():
     bets = [(_bet("Orphan", "unknown_role", "bet_orphan"), "bet_orphan.md")]

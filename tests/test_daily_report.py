@@ -1,7 +1,8 @@
-from datetime import date, timedelta
-from pathlib import Path
-from cns.daily_report import inject_tldr_line, append_conflicts_section
+from datetime import date
+
+from cns.daily_report import append_conflicts_section, inject_tldr_line
 from cns.models import Conflict
+
 
 def test_inject_tldr_inserts_line_under_tldr_header(tmp_path):
     note = tmp_path / "today.md"
@@ -22,6 +23,7 @@ Today shipped the thing.
     shipped_pos = text.index("Today shipped")
     assert tldr_pos < line_pos < shipped_pos
 
+
 def test_inject_tldr_idempotent(tmp_path):
     note = tmp_path / "today.md"
     note.write_text("# x\n## TL;DR\n\nblah\n")
@@ -29,11 +31,13 @@ def test_inject_tldr_idempotent(tmp_path):
     inject_tldr_line(note, n_open=2, oldest_days=1)
     assert note.read_text().count("**Open conflicts:**") == 1
 
+
 def test_inject_tldr_omits_when_zero(tmp_path):
     note = tmp_path / "today.md"
     note.write_text("# x\n## TL;DR\n\nblah\n")
     inject_tldr_line(note, n_open=0, oldest_days=0)
     assert "**Open conflicts:**" not in note.read_text()
+
 
 def test_inject_tldr_noop_when_no_tldr_header(tmp_path):
     note = tmp_path / "today.md"
@@ -41,15 +45,23 @@ def test_inject_tldr_noop_when_no_tldr_header(tmp_path):
     inject_tldr_line(note, n_open=1, oldest_days=1)
     assert "**Open conflicts:**" not in note.read_text()
 
+
 def test_append_conflicts_section(tmp_path):
     note = tmp_path / "today.md"
     note.write_text("# x\n\n## TL;DR\n\nthings\n")
     conflicts = [
-        Conflict(id="C-2026-04-25-x", bet_file="bet_x.md", owner="ceo",
-                 trigger="t", detector_note="n", first_detected=date(2026, 4, 25)),
+        Conflict(
+            id="C-2026-04-25-x",
+            bet_file="bet_x.md",
+            owner="ceo",
+            trigger="t",
+            detector_note="n",
+            first_detected=date(2026, 4, 25),
+        ),
     ]
-    append_conflicts_section(note, conflicts, today=date(2026, 4, 25),
-                             conflicts_file_path="Brain/CONFLICTS.md")
+    append_conflicts_section(
+        note, conflicts, today=date(2026, 4, 25), conflicts_file_path="Brain/CONFLICTS.md"
+    )
     text = note.read_text()
     assert "## Conflicts to Spar" in text
     assert "C-2026-04-25-x" in text

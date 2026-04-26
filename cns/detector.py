@@ -1,20 +1,32 @@
 """Detection: bets + signals + config -> list of conflicts."""
 
 from __future__ import annotations
+
 import re
 from datetime import date
+
+from cns.conflicts import make_conflict_id
 from cns.models import Bet, Config, Conflict
 from cns.signals import Signal
-from cns.conflicts import make_conflict_id
 
 UNSPECIFIED_KILL = "unspecified — needs sparring"
 
 _QUARTER_RE = re.compile(r"\bQ([1-4])\s+(\d{4})\b", re.IGNORECASE)
-_MONTHS = ("january", "february", "march", "april", "may", "june",
-           "july", "august", "september", "october", "november", "december")
-_MONTH_YEAR_RE = re.compile(
-    r"\b(" + "|".join(_MONTHS) + r")\s+(\d{4})\b", re.IGNORECASE
+_MONTHS = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 )
+_MONTH_YEAR_RE = re.compile(r"\b(" + "|".join(_MONTHS) + r")\s+(\d{4})\b", re.IGNORECASE)
 
 
 def detect_conflicts(
@@ -48,35 +60,47 @@ def detect_conflicts(
             continue
 
         if bet.kill_criteria.strip().lower() == UNSPECIFIED_KILL:
-            out.append(_make(
-                slug=_slug_from_filename(path) + "-needs-sparring",
-                bet_file=path, owner=bet.owner, today=today,
-                trigger=f"Kill criteria for '{bet.name}' is unspecified — needs sparring.",
-                note="Resolve via /spar to define when this bet should be killed.",
-            ))
+            out.append(
+                _make(
+                    slug=_slug_from_filename(path) + "-needs-sparring",
+                    bet_file=path,
+                    owner=bet.owner,
+                    today=today,
+                    trigger=f"Kill criteria for '{bet.name}' is unspecified — needs sparring.",
+                    note="Resolve via /spar to define when this bet should be killed.",
+                )
+            )
 
         kill_text = bet.kill_criteria.lower()
         if kill_text != UNSPECIFIED_KILL:
             for sig in signals:
                 if _phrase_match(kill_text, sig.content.lower()):
-                    out.append(_make(
-                        slug=_slug_from_filename(path) + "-killed-trigger",
-                        bet_file=path, owner=bet.owner, today=today,
-                        trigger=f"Signal {sig.source} matches kill_criteria of '{bet.name}'.",
-                        note=f"Kill criteria: {bet.kill_criteria[:120]}",
-                    ))
+                    out.append(
+                        _make(
+                            slug=_slug_from_filename(path) + "-killed-trigger",
+                            bet_file=path,
+                            owner=bet.owner,
+                            today=today,
+                            trigger=f"Signal {sig.source} matches kill_criteria of '{bet.name}'.",
+                            note=f"Kill criteria: {bet.kill_criteria[:120]}",
+                        )
+                    )
                     break
 
         bet_body_lower = (bet.body_the_bet or "").lower()
         if bet_body_lower:
             for sig in signals:
                 if _signal_contradicts_bet(bet_body_lower, sig.content.lower()):
-                    out.append(_make(
-                        slug=_slug_from_filename(path) + "-signal-contradiction",
-                        bet_file=path, owner=bet.owner, today=today,
-                        trigger=f"Signal {sig.source} appears to contradict '{bet.name}'.",
-                        note=sig.source,
-                    ))
+                    out.append(
+                        _make(
+                            slug=_slug_from_filename(path) + "-signal-contradiction",
+                            bet_file=path,
+                            owner=bet.owner,
+                            today=today,
+                            trigger=f"Signal {sig.source} appears to contradict '{bet.name}'.",
+                            note=sig.source,
+                        )
+                    )
                     break
 
         if cfg.detection.staleness_check:
@@ -84,13 +108,17 @@ def detect_conflicts(
             if threshold is not None:
                 age = (today - bet.last_reviewed).days
                 if age > threshold:
-                    out.append(_make(
-                        slug=_slug_from_filename(path) + "-stale",
-                        bet_file=path, owner=bet.owner, today=today,
-                        trigger=f"Stale: '{bet.name}' (horizon {bet.horizon}) "
-                                f"unreviewed for {age} days; threshold is {threshold}.",
-                        note=f"Last reviewed {bet.last_reviewed.isoformat()}.",
-                    ))
+                    out.append(
+                        _make(
+                            slug=_slug_from_filename(path) + "-stale",
+                            bet_file=path,
+                            owner=bet.owner,
+                            today=today,
+                            trigger=f"Stale: '{bet.name}' (horizon {bet.horizon}) "
+                            f"unreviewed for {age} days; threshold is {threshold}.",
+                            note=f"Last reviewed {bet.last_reviewed.isoformat()}.",
+                        )
+                    )
 
     if cfg.detection.cross_bet_check:
         for i in range(len(bets)):
@@ -99,23 +127,28 @@ def detect_conflicts(
                 b_bet, b_path = bets[j]
                 conflict_kind = _structural_cross_bet_conflict(a_bet, b_bet)
                 if conflict_kind:
-                    out.append(_make(
-                        slug=f"{_slug_from_filename(a_path)}-vs-{_slug_from_filename(b_path)}",
-                        bet_file=a_path, owner=a_bet.owner, today=today,
-                        trigger=f"Cross-bet contradiction ({conflict_kind}): "
-                                f"'{a_bet.name}' vs '{b_bet.name}'.",
-                        note=f"Other bet: {b_path}",
-                    ))
+                    out.append(
+                        _make(
+                            slug=f"{_slug_from_filename(a_path)}-vs-{_slug_from_filename(b_path)}",
+                            bet_file=a_path,
+                            owner=a_bet.owner,
+                            today=today,
+                            trigger=f"Cross-bet contradiction ({conflict_kind}): "
+                            f"'{a_bet.name}' vs '{b_bet.name}'.",
+                            note=f"Other bet: {b_path}",
+                        )
+                    )
 
     return _dedupe_by_id(out)
 
 
-def _make(slug: str, bet_file: str, owner: str, today: date,
-          trigger: str, note: str) -> Conflict:
+def _make(slug: str, bet_file: str, owner: str, today: date, trigger: str, note: str) -> Conflict:
     return Conflict(
         id=make_conflict_id(slug),
-        bet_file=bet_file, owner=owner,
-        trigger=trigger, detector_note=note,
+        bet_file=bet_file,
+        owner=owner,
+        trigger=trigger,
+        detector_note=note,
         first_detected=today,
     )
 
@@ -142,7 +175,7 @@ def _phrase_match(needle_text: str, haystack: str) -> bool:
         if len(words) < 2:
             continue
         hits_idxs = [haystack.find(w) for w in words]
-        present = [(w, i) for w, i in zip(words, hits_idxs) if i >= 0]
+        present = [(w, i) for w, i in zip(words, hits_idxs, strict=True) if i >= 0]
         if len(present) < 2:
             continue
         present.sort(key=lambda x: x[1])
@@ -228,18 +261,17 @@ def _structural_cross_bet_conflict(a: Bet, b: Bet) -> str | None:
 
 
 def _distinctive_terms(text: str) -> set[str]:
-    return {w.lower().strip(".,;:!?\"'()[]") for w in text.split()
-            if len(w.strip(".,;:!?\"'()[]")) >= 5}
+    return {
+        w.lower().strip(".,;:!?\"'()[]") for w in text.split() if len(w.strip(".,;:!?\"'()[]")) >= 5
+    }
 
 
 def _extract_quarters(text: str) -> set[tuple[int, int]]:
-    return {(int(m.group(2)), int(m.group(1)))
-            for m in _QUARTER_RE.finditer(text)}
+    return {(int(m.group(2)), int(m.group(1))) for m in _QUARTER_RE.finditer(text)}
 
 
 def _extract_month_years(text: str) -> set[tuple[int, str]]:
-    return {(int(m.group(2)), m.group(1).lower())
-            for m in _MONTH_YEAR_RE.finditer(text)}
+    return {(int(m.group(2)), m.group(1).lower()) for m in _MONTH_YEAR_RE.finditer(text)}
 
 
 def _dedupe_by_id(conflicts: list[Conflict]) -> list[Conflict]:

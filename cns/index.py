@@ -1,6 +1,7 @@
 """Generate the BETS.md index from a list of active bets."""
 
 from __future__ import annotations
+
 from cns.models import Bet, RoleSpec
 
 

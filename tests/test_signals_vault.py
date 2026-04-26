@@ -1,18 +1,20 @@
 import os
 import subprocess
-from datetime import datetime, timedelta
 from pathlib import Path
-import pytest
 from unittest.mock import patch
-from cns.signals import VaultDirSignal, Signal
+
+from cns.signals import Signal, VaultDirSignal
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
 
 def _init_git_vault(root: Path) -> None:
     _git(root, "init", "-b", "main")
     _git(root, "config", "user.email", "test@example.com")
     _git(root, "config", "user.name", "Test")
+
 
 def test_vault_dir_returns_recently_modified_md_files(tmp_path):
     _init_git_vault(tmp_path)
@@ -28,6 +30,7 @@ def test_vault_dir_returns_recently_modified_md_files(tmp_path):
     assert signals[0].source == "vault_dir:Daily"
     assert "some content" in signals[0].content
 
+
 def test_vault_dir_skips_old_files(tmp_path):
     _init_git_vault(tmp_path)
     (tmp_path / "Daily").mkdir()
@@ -35,10 +38,14 @@ def test_vault_dir_skips_old_files(tmp_path):
     f.write_text("ancient")
     _git(tmp_path, "add", "Daily/")
     # Commit in the past
-    env = {"GIT_COMMITTER_DATE": "2020-01-01T00:00:00Z",
-           "GIT_AUTHOR_DATE": "2020-01-01T00:00:00Z"}
-    subprocess.run(["git", "commit", "-m", "old", "--date=2020-01-01"],
-                   cwd=tmp_path, check=True, capture_output=True, env={**os.environ, **env})
+    env = {"GIT_COMMITTER_DATE": "2020-01-01T00:00:00Z", "GIT_AUTHOR_DATE": "2020-01-01T00:00:00Z"}
+    subprocess.run(
+        ["git", "commit", "-m", "old", "--date=2020-01-01"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        env={**os.environ, **env},
+    )
 
     src = VaultDirSignal(path="Daily")
     signals = src.collect(vault_root=tmp_path, window_hours=24)
