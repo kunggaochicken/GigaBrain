@@ -161,12 +161,15 @@ def detect(vault, today):
 
     import subprocess
     modified_today: set[str] = set()
-    result = subprocess.run(
-        ["git", "log", f"--since={cfg.detection.window_hours} hours ago",
-         "--name-only", "--pretty=format:", "--", cfg.brain.bets_dir],
-        cwd=root, capture_output=True, text=True,
-    )
-    if result.returncode == 0:
+    try:
+        result = subprocess.run(
+            ["git", "log", f"--since={cfg.detection.window_hours} hours ago",
+             "--name-only", "--pretty=format:", "--", cfg.brain.bets_dir],
+            cwd=root, capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        result = None
+    if result and result.returncode == 0:
         for line in result.stdout.splitlines():
             line = line.strip()
             if line.startswith(cfg.brain.bets_dir + "/"):

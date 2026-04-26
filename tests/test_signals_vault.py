@@ -3,6 +3,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 import pytest
+from unittest.mock import patch
 from cns.signals import VaultDirSignal, Signal
 
 def _git(cwd: Path, *args: str) -> None:
@@ -41,4 +42,13 @@ def test_vault_dir_skips_old_files(tmp_path):
 
     src = VaultDirSignal(path="Daily")
     signals = src.collect(vault_root=tmp_path, window_hours=24)
+    assert signals == []
+
+
+def test_vault_dir_returns_empty_when_git_not_installed(tmp_path):
+    (tmp_path / "Daily").mkdir()
+    (tmp_path / "Daily" / "2026-04-25.md").write_text("content")
+    src = VaultDirSignal(path="Daily")
+    with patch("cns.signals.subprocess.run", side_effect=FileNotFoundError("git not found")):
+        signals = src.collect(vault_root=tmp_path, window_hours=24)
     assert signals == []

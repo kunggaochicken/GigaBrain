@@ -27,11 +27,14 @@ class VaultDirSignal:
         target = vault_root / self.path
         if not target.exists():
             return []
-        result = subprocess.run(
-            ["git", "log", f"--since={window_hours} hours ago",
-             "--name-only", "--pretty=format:", "--", self.path],
-            cwd=vault_root, capture_output=True, text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["git", "log", f"--since={window_hours} hours ago",
+                 "--name-only", "--pretty=format:", "--", self.path],
+                cwd=vault_root, capture_output=True, text=True,
+            )
+        except FileNotFoundError:
+            return []
         if result.returncode != 0:
             return []
         files = sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
@@ -60,11 +63,14 @@ class GitCommitsSignal:
             repo_path = (vault_root / rel).resolve()
             if not (repo_path / ".git").exists():
                 continue
-            result = subprocess.run(
-                ["git", "log", f"--since={window_hours} hours ago",
-                 "--pretty=format:%H%x00%s%x00%b%x1e"],
-                cwd=repo_path, capture_output=True, text=True,
-            )
+            try:
+                result = subprocess.run(
+                    ["git", "log", f"--since={window_hours} hours ago",
+                     "--pretty=format:%H%x00%s%x00%b%x1e"],
+                    cwd=repo_path, capture_output=True, text=True,
+                )
+            except FileNotFoundError:
+                continue
             if result.returncode != 0:
                 continue
             for entry in result.stdout.split("\x1e"):
@@ -93,12 +99,15 @@ class GitHubPRsSignal:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
         signals: list[Signal] = []
         for repo in self.repos:
-            result = subprocess.run(
-                ["gh", "pr", "list", "--repo", repo, "--state", "merged",
-                 "--limit", "50",
-                 "--json", "number,title,body,mergedAt"],
-                capture_output=True, text=True,
-            )
+            try:
+                result = subprocess.run(
+                    ["gh", "pr", "list", "--repo", repo, "--state", "merged",
+                     "--limit", "50",
+                     "--json", "number,title,body,mergedAt"],
+                    capture_output=True, text=True,
+                )
+            except FileNotFoundError:
+                continue
             if result.returncode != 0:
                 continue
             try:
