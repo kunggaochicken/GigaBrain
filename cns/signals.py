@@ -1,8 +1,10 @@
 """Signal source loaders. A signal is a piece of recent text the detector compares to bets."""
 
 from __future__ import annotations
+import json as _json
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -78,5 +80,41 @@ class GitCommitsSignal:
                 signals.append(Signal(
                     source=f"git:{rel}#{sha}",
                     content=f"{subject}\n\n{body}".strip(),
+                ))
+        return signals
+
+
+@dataclass
+class GitHubPRsSignal:
+    repos: list[str]  # "owner/repo" format
+    auth: str = "gh_cli"
+
+    def collect(self, vault_root: Path, window_hours: int) -> list[Signal]:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+        signals: list[Signal] = []
+        for repo in self.repos:
+            result = subprocess.run(
+                ["gh", "pr", "list", "--repo", repo, "--state", "merged",
+                 "--limit", "50",
+                 "--json", "number,title,body,mergedAt"],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                continue
+            try:
+                prs = _json.loads(result.stdout or "[]")
+            except _json.JSONDecodeError:
+                continue
+            for pr in prs:
+                merged_at_raw = pr.get("mergedAt")
+                if not merged_at_raw:
+                    continue
+                merged_at = datetime.fromisoformat(merged_at_raw.replace("Z", "+00:00"))
+                if merged_at < cutoff:
+                    continue
+                content = f"{pr['title']}\n\n{pr.get('body') or ''}".strip()
+                signals.append(Signal(
+                    source=f"github:{repo}#{pr['number']}",
+                    content=content,
                 ))
         return signals
