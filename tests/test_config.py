@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from cns.config import load_config, find_vault_root, ConfigNotFound
+from cns.config import load_config, find_vault_root, ConfigNotFound, ConfigInvalid
 
 def test_load_config_reads_yaml(sample_vault):
     cfg = load_config(sample_vault / ".cns/config.yaml")
@@ -18,3 +18,18 @@ def test_find_vault_root_walks_up(sample_vault, tmp_path):
 
 def test_find_vault_root_returns_none_when_no_config(tmp_path):
     assert find_vault_root(tmp_path) is None
+
+
+def test_load_config_raises_on_invalid_yaml(tmp_path):
+    bad = tmp_path / "config.yaml"
+    bad.write_text("not: [valid: yaml")
+    with pytest.raises(ConfigInvalid):
+        load_config(bad)
+
+
+def test_load_config_raises_on_missing_required_field(tmp_path):
+    bad = tmp_path / "config.yaml"
+    bad.write_text("brain:\n  root: Brain\nroles: []\nhorizons: {}\nsignal_sources: []\n")
+    # Missing required fields in brain (bets_dir, etc.) AND missing horizon keys
+    with pytest.raises(ConfigInvalid):
+        load_config(bad)

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 import click
-from cns.config import load_config, find_vault_root, ConfigNotFound
+from cns.config import load_config, find_vault_root, ConfigNotFound, ConfigInvalid
 from cns.bet import list_bets
 from cns.models import BetStatus
 from cns.index import render_bets_index
@@ -20,7 +20,10 @@ def _load_vault(vault: Path | None):
     root = vault or find_vault_root(Path.cwd())
     if root is None:
         raise click.ClickException("no vault root found (no .cns/config.yaml in cwd or ancestors)")
-    cfg = load_config(root / ".cns/config.yaml")
+    try:
+        cfg = load_config(root / ".cns/config.yaml")
+    except (ConfigNotFound, ConfigInvalid) as e:
+        raise click.ClickException(str(e))
     return root, cfg
 
 
@@ -90,7 +93,7 @@ def validate(vault):
     """Validate config and bet files."""
     try:
         root, cfg = _load_vault(vault)
-    except (ConfigNotFound, click.ClickException) as e:
+    except (ConfigNotFound, ConfigInvalid, click.ClickException) as e:
         raise click.ClickException(str(e))
     bets_dir = root / cfg.brain.bets_dir
     n = 0

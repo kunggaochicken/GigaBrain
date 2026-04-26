@@ -3,6 +3,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
+import pydantic
 import yaml
 from cns.models import Config
 
@@ -11,11 +12,21 @@ class ConfigNotFound(FileNotFoundError):
     pass
 
 
+class ConfigInvalid(ValueError):
+    pass
+
+
 def load_config(path: Path) -> Config:
     if not path.exists():
         raise ConfigNotFound(f"no config at {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return Config(**data)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ConfigInvalid(f"invalid YAML in {path}: {e}") from e
+    try:
+        return Config(**data)
+    except pydantic.ValidationError as e:
+        raise ConfigInvalid(f"invalid config in {path}: {e}") from e
 
 
 def find_vault_root(start: Path) -> Optional[Path]:
