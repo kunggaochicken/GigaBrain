@@ -41,7 +41,7 @@ Obsidian hides dotfile folders by default — that's fine. `.cns/` is managed by
 (gets you the `/cns`, `/cns-bootstrap`, `/cns-detect`, `/spar` skills)
 
 ```
-/plugin marketplace add kunggaochicken/cns
+/plugin marketplace add kunggaochicken/GigaBrain
 /plugin install cns@cns
 ```
 
@@ -50,7 +50,7 @@ Obsidian hides dotfile folders by default — that's fine. `.cns/` is managed by
 (gets you `cns bootstrap | reindex | detect | validate`)
 
 ```bash
-pip install git+https://github.com/kunggaochicken/cns.git
+pip install git+https://github.com/kunggaochicken/GigaBrain.git
 # (PyPI release coming in v0.2)
 ```
 
