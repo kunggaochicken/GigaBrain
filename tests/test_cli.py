@@ -51,3 +51,13 @@ def test_detect_writes_conflicts_for_unspecified_kill(sample_vault):
     assert conflicts_file.exists()
     text = conflicts_file.read_text()
     assert "needs-sparring" in text or "needs sparring" in text.lower()
+
+
+def test_detect_skips_malformed_bet_with_warning(sample_vault):
+    bad = sample_vault / "Brain/Bets/bet_malformed.md"
+    bad.write_text("---\nname: missing required fields\n---\n")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["detect", "--vault", str(sample_vault),
+                                  "--today", "2026-04-25"])
+    assert result.exit_code == 0, result.output
+    assert "skipping malformed bet" in result.output

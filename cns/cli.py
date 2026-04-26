@@ -119,8 +119,12 @@ def reindex(vault):
     bets_dir = root / cfg.brain.bets_dir
     bets_with_paths = []
     for path in sorted(bets_dir.glob("bet_*.md")):
-        from cns.bet import load_bet
-        bet = load_bet(path)
+        try:
+            from cns.bet import load_bet
+            bet = load_bet(path)
+        except Exception as e:
+            click.echo(f"warning: skipping malformed bet {path.name}: {e}", err=True)
+            continue
         if bet.status == BetStatus.ACTIVE:
             bets_with_paths.append((bet, path.name))
     text = render_bets_index(bets_with_paths, cfg.roles)
@@ -143,8 +147,12 @@ def detect(vault, today):
     bets_dir = root / cfg.brain.bets_dir
     bets_with_paths = []
     for path in sorted(bets_dir.glob("bet_*.md")):
-        from cns.bet import load_bet
-        bet = load_bet(path)
+        try:
+            from cns.bet import load_bet
+            bet = load_bet(path)
+        except Exception as e:
+            click.echo(f"warning: skipping malformed bet {path.name}: {e}", err=True)
+            continue
         if bet.status == BetStatus.ACTIVE:
             bets_with_paths.append((bet, path.name))
 
