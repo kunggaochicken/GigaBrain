@@ -1,0 +1,30 @@
+brain:
+  root: Brain
+  bets_dir: Brain/Bets
+  bets_index: Brain/Bets/BETS.md
+  conflicts_file: Brain/CONFLICTS.md
+  archive_dir: null
+
+roles:
+  - id: ceo
+    name: CEO
+
+horizons:
+  this-week: 7
+  this-month: 30
+  this-quarter: 90
+  strategic: 180
+
+signal_sources: []
+
+detection:
+  window_hours: 24
+  match_strategy: substring
+  cross_bet_check: true
+  staleness_check: true
+
+automation:
+  daily_report:
+    integration: none
+    inject_tldr_line: false
+    daily_note_dir: null

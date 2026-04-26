@@ -1,0 +1,31 @@
+---
+name: <short title — used in BETS.md index>
+description: <one-line hook>
+status: active
+owner: <role id from .cns/config.yaml>
+horizon: this-week  # or this-month / this-quarter / strategic
+confidence: medium  # low / medium / high
+supersedes: null
+created: YYYY-MM-DD
+last_reviewed: YYYY-MM-DD
+kill_criteria: unspecified — needs sparring
+deferred_until: null
+---
+
+## The bet
+1–2 sentences. What's the call?
+
+## Why
+What made this win over alternatives?
+
+## What would change this
+Specific observable signals that would flip this bet. (Match `kill_criteria` above, but in prose.)
+
+## Open threads
+- Sub-question 1
+- Sub-question 2
+
+## Linked
+- evidence: []
+- depends_on: []
+- blocks: []

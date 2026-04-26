@@ -1,0 +1,34 @@
+brain:
+  root: Brain
+  bets_dir: Brain/Bets
+  bets_index: Brain/Bets/BETS.md
+  conflicts_file: Brain/CONFLICTS.md
+
+roles:
+  - id: engineer
+    name: Engineer
+  - id: manager
+    name: Manager
+  - id: designer
+    name: Designer
+  - id: pm
+    name: Product Manager
+
+horizons:
+  this-week: 7
+  this-month: 30
+  this-quarter: 90
+  strategic: 180
+
+signal_sources:
+  - kind: vault_dir
+    path: notes
+  - kind: git_commits
+    repos:
+      - ../my-project
+
+detection:
+  window_hours: 24
+  match_strategy: substring
+  cross_bet_check: true
+  staleness_check: true

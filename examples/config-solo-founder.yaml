@@ -1,0 +1,51 @@
+brain:
+  root: Brain
+  bets_dir: Brain/Bets
+  bets_index: Brain/Bets/BETS.md
+  conflicts_file: Brain/CONFLICTS.md
+
+roles:
+  - id: ceo
+    name: CEO
+  - id: cto
+    name: CTO
+  - id: cso
+    name: Chief Scientist Officer
+  - id: cmo
+    name: CMO
+  - id: cpo
+    name: CPO
+  - id: clo
+    name: CLO
+  - id: cfo
+    name: CFO
+
+horizons:
+  this-week: 7
+  this-month: 30
+  this-quarter: 90
+  strategic: 180
+
+signal_sources:
+  - kind: vault_dir
+    path: Daily
+  - kind: vault_dir
+    path: Research
+  - kind: vault_dir
+    path: Marketing
+  - kind: vault_dir
+    path: Strategy
+  - kind: vault_dir
+    path: memory
+
+detection:
+  window_hours: 24
+  match_strategy: substring
+  cross_bet_check: true
+  staleness_check: true
+
+automation:
+  daily_report:
+    integration: optional
+    inject_tldr_line: true
+    daily_note_dir: Daily
