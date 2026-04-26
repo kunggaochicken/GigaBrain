@@ -26,17 +26,34 @@ horizons:
   this-quarter: 90
   strategic: 180
 
-signal_sources:
-  - kind: vault_dir
-    path: Daily
-  - kind: vault_dir
-    path: Research
-  - kind: vault_dir
-    path: Marketing
-  - kind: vault_dir
-    path: Strategy
-  - kind: vault_dir
-    path: memory
+# Signal sources are external state changes that might invalidate a bet's
+# assumptions. The right pattern is *low-noise external state* (real changes
+# in code or PRs), not *high-noise free-form thinking* (Daily/, Strategy/).
+#
+# CRITICAL: do NOT include directories that were used as bet *source corpus*.
+# If you ran `cns-bootstrap --from-existing Strategy/ Research/` to extract
+# bets from those dirs, the bets will trivially match their own source files
+# (substring detection finds the same vocabulary on both sides). The detector
+# will fire ~1-2 conflicts per bet against the corpus they came from.
+#
+# Recommended (low-noise, high-signal):
+#   - kind: git_commits
+#     repos: [../my-app, ../my-cli]
+#   - kind: github_prs
+#     repos: [my-org/my-app]
+#     auth: gh_cli
+#
+# Optionally include vault dirs that are NOT bet derivation sources:
+#   - kind: vault_dir
+#     path: Daily   # free-form daily notes (high noise but timely)
+#   - kind: vault_dir
+#     path: memory  # decisions/learnings (medium noise)
+#
+# DO NOT include without thinking carefully:
+#   - Strategy/ if you bootstrapped from it
+#   - Marketing/ if you bootstrapped from it
+#   - Research/ if you bootstrapped from it
+signal_sources: []
 
 detection:
   window_hours: 24

@@ -20,6 +20,11 @@ horizons:
   this-quarter: 90
   strategic: 180
 
+# Signal sources should be *low-noise external state changes*, not the same
+# directories you used as bet source corpus during `cns-bootstrap
+# --from-existing`. See examples/config-solo-founder.yaml for the full
+# rationale. Code changes (git_commits, github_prs) are high-signal; the
+# `notes/` dir below is fine if it's NOT where your bets were extracted from.
 signal_sources:
   - kind: vault_dir
     path: notes
