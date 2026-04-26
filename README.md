@@ -15,14 +15,14 @@ Strategic state drifts. The strategy doc you wrote in March doesn't agree with t
 **Install the Claude Code plugin** (gets you the `/cns`, `/cns-bootstrap`, `/cns-detect`, `/spar` skills):
 
 ```
-/plugin marketplace add Jamesjg2/cns
+/plugin marketplace add kunggaochicken/cns
 /plugin install cns@cns
 ```
 
 **Install the Python CLI** (gets you `cns bootstrap | reindex | detect | validate`):
 
 ```bash
-pip install git+https://github.com/Jamesjg2/cns.git
+pip install git+https://github.com/kunggaochicken/cns.git
 # (PyPI release coming in v0.2)
 ```
 
