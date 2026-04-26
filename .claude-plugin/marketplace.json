@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "cns",
-      "source": ".",
+      "source": "./",
       "description": "Central Nervous System — atomized strategic bets with conflict detection. /cns, /cns-bootstrap, /cns-detect, /spar."
     }
   ]
