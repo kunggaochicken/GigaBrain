@@ -46,3 +46,37 @@ class VaultDirSignal:
                 continue
             signals.append(Signal(source=f"vault_dir:{self.path}", content=content))
         return signals
+
+
+@dataclass
+class GitCommitsSignal:
+    repos: list[str]  # paths relative to vault_root
+
+    def collect(self, vault_root: Path, window_hours: int) -> list[Signal]:
+        signals: list[Signal] = []
+        for rel in self.repos:
+            repo_path = (vault_root / rel).resolve()
+            if not (repo_path / ".git").exists():
+                continue
+            result = subprocess.run(
+                ["git", "log", f"--since={window_hours} hours ago",
+                 "--pretty=format:%H%x00%s%x00%b%x1e"],
+                cwd=repo_path, capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                continue
+            for entry in result.stdout.split("\x1e"):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                parts = entry.split("\x00")
+                if len(parts) < 2:
+                    continue
+                sha = parts[0][:7]
+                subject = parts[1]
+                body = parts[2] if len(parts) > 2 else ""
+                signals.append(Signal(
+                    source=f"git:{rel}#{sha}",
+                    content=f"{subject}\n\n{body}".strip(),
+                ))
+        return signals
