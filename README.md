@@ -1,4 +1,4 @@
-# CNS — Central Nervous System
+# GigaBrain CNS — Central Nervous System
 
 Atomized strategic bets with automated conflict detection for markdown vaults.
 
