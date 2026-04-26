@@ -17,7 +17,7 @@ pip install cns
 
 # In your vault:
 cd path/to/your/vault
-cns-bootstrap --blank      # interactive config wizard
+cns bootstrap              # create .cns/config.yaml with default settings
 
 # Write your first bet (copy the template):
 cp /path/to/cns/templates/bet.md.template Brain/Bets/bet_my_first.md
@@ -32,6 +32,8 @@ cns detect
 # Resolve conflicts interactively (in Claude Code):
 /spar
 ```
+
+For interactive setup with a config wizard, use the `/cns-bootstrap` Claude Code skill instead.
 
 Full walkthrough: [docs/getting-started.md](docs/getting-started.md)
 

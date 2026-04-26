@@ -4,6 +4,28 @@ from pathlib import Path
 from click.testing import CliRunner
 from cns.cli import cli
 
+
+def test_bootstrap_creates_config_and_dirs(tmp_path):
+    runner = CliRunner()
+    vault = tmp_path / "v"
+    vault.mkdir()
+    result = runner.invoke(cli, ["bootstrap", "--vault", str(vault), "--preset", "minimal"])
+    assert result.exit_code == 0, result.output
+    assert (vault / ".cns/config.yaml").exists()
+    assert (vault / "Brain/Bets").is_dir()
+    assert (vault / "Brain/CONFLICTS.md").exists()
+
+
+def test_bootstrap_refuses_overwrite(tmp_path):
+    runner = CliRunner()
+    vault = tmp_path / "v"
+    vault.mkdir()
+    runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    result = runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    assert result.exit_code != 0
+    assert "already exists" in result.output
+
+
 def test_validate_passes_on_sample_vault(sample_vault):
     runner = CliRunner()
     result = runner.invoke(cli, ["validate", "--vault", str(sample_vault)])

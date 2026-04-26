@@ -43,6 +43,47 @@ def cli():
 
 
 @cli.command()
+@click.option("--vault", type=click.Path(path_type=Path),
+              default=None, help="Vault root (default: cwd)")
+@click.option("--preset", type=click.Choice(["solo-founder", "engineering-lead", "minimal"]),
+              default="minimal", help="Config preset to use")
+def bootstrap(vault, preset):
+    """Initialize CNS in a vault with a default config (use --preset for richer presets)."""
+    root = vault or Path.cwd()
+    config_dir = root / ".cns"
+    config_path = config_dir / "config.yaml"
+    if config_path.exists():
+        raise click.ClickException(f"config already exists at {config_path}")
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    pkg_root = Path(__file__).resolve().parent.parent
+    if preset == "solo-founder":
+        src = pkg_root / "examples/config-solo-founder.yaml"
+    elif preset == "engineering-lead":
+        src = pkg_root / "examples/config-engineering-lead.yaml"
+    else:
+        src = pkg_root / "templates/config.yaml.template"
+
+    if not src.exists():
+        raise click.ClickException(f"preset/template not found at {src}")
+    config_path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+    cfg = load_config(config_path)
+    bets_dir = root / cfg.brain.bets_dir
+    bets_dir.mkdir(parents=True, exist_ok=True)
+    conflicts_path = root / cfg.brain.conflicts_file
+    conflicts_path.parent.mkdir(parents=True, exist_ok=True)
+    if not conflicts_path.exists():
+        conflicts_path.write_text("# Open Conflicts\n", encoding="utf-8")
+
+    click.echo(f"CNS bootstrapped at {root}")
+    click.echo(f"  config: {config_path}")
+    click.echo(f"  bets dir: {bets_dir}")
+    click.echo(f"  conflicts: {conflicts_path}")
+    click.echo("Next: write a bet (cp templates/bet.md.template <bets_dir>/bet_<slug>.md), then `cns reindex` and `cns detect`.")
+
+
+@cli.command()
 @click.option("--vault", type=click.Path(path_type=Path, exists=True),
               default=None, help="Vault root (auto-detected if omitted)")
 def validate(vault):

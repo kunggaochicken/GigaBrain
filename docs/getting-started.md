@@ -14,14 +14,17 @@ You also need the `cns` skills installed in Claude Code (or your preferred agent
 
 ```bash
 cd /path/to/your/vault
-cns-bootstrap --blank
+cns bootstrap
 ```
 
-The wizard will ask you about:
-- Brain folder name (default: `Brain`)
-- Role roster (default: solo-founder 7-role preset)
-- Signal sources (which vault folders / git repos / GitHub repos to scan)
-- Daily report integration (if you have one)
+This creates a minimal default config. For interactive setup with a config wizard, use the `/cns-bootstrap` Claude Code skill instead.
+
+You can also choose a richer preset with `--preset`:
+
+```bash
+cns bootstrap --preset solo-founder    # 7-role solo-founder config
+cns bootstrap --preset engineering-lead
+```
 
 This produces:
 - `.cns/config.yaml` — your CNS configuration
