@@ -30,8 +30,8 @@ When invoked with `--blank` or no argument:
 
    c. **Horizon thresholds?** Default: `this-week=7, this-month=30, this-quarter=90, strategic=180`. Ask if user wants to override any.
 
-   d. **Signal sources?** For each:
-      - "Add a vault directory whose .md edits should count as signal? (e.g., `Daily/`, `Research/`, `Marketing/`. Empty to skip.)"
+   d. **Signal sources?** Signal sources should be *external state changes* that might invalidate a bet — code commits, merged PRs, free-form daily notes that capture new information. They should NOT be the directories you extracted bets from (those will trivially self-match on every detect run). Ask for each:
+      - "Add a vault directory whose .md edits should count as signal? Good fits: `Daily/` (free-form thinking), `memory/` (decisions). AVOID: any path you used as bet source corpus. Empty to skip."
       - "Add a git repo to scan for commits? (path relative to vault root. Empty to skip.)"
       - "Add a GitHub repo to scan for merged PRs? (`owner/repo` format. Empty to skip.)"
 
@@ -78,7 +78,13 @@ When invoked with `--from-existing <path1> <path2> ...` (paths relative to vault
 
 5. **Generate the index.** Run `cns reindex --vault <vault>` to produce `BETS.md`.
 
-6. **Print the review prompt.**
+6. **Audit signal_sources for source-corpus overlap.** If `.cns/config.yaml` lists any `vault_dir` signal_sources whose `path` matches a directory passed to `--from-existing`, this will cause systematic over-fire: bets will trivially match their own derivation corpus on every `cns detect` run. Print a warning and offer to remove the overlapping entries:
+
+   > "Detected signal_source overlap with bet source corpus: <list paths>. After bootstrap, signal_sources should track *external state changes* (code, PRs, daily notes), not the directories bets were extracted from. Remove these entries from signal_sources? (y/n)"
+
+   If yes, edit `.cns/config.yaml` to remove the overlapping `vault_dir` entries.
+
+7. **Print the review prompt.**
    > "I drafted N bets in `<vault>/<bets_dir>/`. Please review:
    > 1. Open `<vault>/<bets_dir>/BETS.md` to see the full list.
    > 2. Read each draft bet — accept, edit, or reject.
@@ -87,7 +93,7 @@ When invoked with `--from-existing <path1> <path2> ...` (paths relative to vault
    >
    > When you're done, run `cns detect` to start the regular conflict-detection cycle. Optionally, add a 'decomposed into Brain/Bets/' header to the source documents you extracted from (use `--add-decomposed-headers` to do this automatically)."
 
-7. **`--add-decomposed-headers` flag.** If the user passes this flag, prepend the following header to each source `.md` file used in extraction (idempotent — check if the marker already exists before inserting):
+8. **`--add-decomposed-headers` flag.** If the user passes this flag, prepend the following header to each source `.md` file used in extraction (idempotent — check if the marker already exists before inserting):
 
    ```markdown
    <!-- cns-decomposed -->
