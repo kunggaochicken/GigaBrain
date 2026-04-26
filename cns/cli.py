@@ -1,0 +1,153 @@
+"""CLI entry points: `cns validate`, `cns reindex`, `cns detect`."""
+
+from __future__ import annotations
+from datetime import date
+from pathlib import Path
+import click
+from cns.config import load_config, find_vault_root, ConfigNotFound
+from cns.bet import list_bets
+from cns.models import BetStatus
+from cns.index import render_bets_index
+from cns.conflicts import (
+    parse_conflicts_file, render_conflicts_file, merge_detected,
+)
+from cns.detector import detect_conflicts
+from cns.signals import VaultDirSignal, GitCommitsSignal, GitHubPRsSignal
+from cns.daily_report import inject_tldr_line, append_conflicts_section
+
+
+def _load_vault(vault: Path | None):
+    root = vault or find_vault_root(Path.cwd())
+    if root is None:
+        raise click.ClickException("no vault root found (no .cns/config.yaml in cwd or ancestors)")
+    cfg = load_config(root / ".cns/config.yaml")
+    return root, cfg
+
+
+def _build_signal_sources(cfg):
+    out = []
+    for s in cfg.signal_sources:
+        if s.kind == "vault_dir":
+            out.append(VaultDirSignal(path=s.path))
+        elif s.kind == "git_commits":
+            out.append(GitCommitsSignal(repos=s.repos or []))
+        elif s.kind == "github_prs":
+            out.append(GitHubPRsSignal(repos=s.repos or [],
+                                        auth=s.auth or "gh_cli"))
+    return out
+
+
+@click.group()
+def cli():
+    """CNS: Central Nervous System for atomized strategic bets."""
+
+
+@cli.command()
+@click.option("--vault", type=click.Path(path_type=Path, exists=True),
+              default=None, help="Vault root (auto-detected if omitted)")
+def validate(vault):
+    """Validate config and bet files."""
+    try:
+        root, cfg = _load_vault(vault)
+    except (ConfigNotFound, click.ClickException) as e:
+        raise click.ClickException(str(e))
+    bets_dir = root / cfg.brain.bets_dir
+    n = 0
+    errors = []
+    for path in sorted(bets_dir.glob("bet_*.md")):
+        try:
+            from cns.bet import load_bet
+            load_bet(path)
+            n += 1
+        except Exception as e:
+            errors.append(f"{path.name}: {e}")
+    if errors:
+        click.echo("FAIL")
+        for e in errors:
+            click.echo(f"  {e}")
+        raise click.ClickException(f"{len(errors)} invalid bet(s)")
+    click.echo(f"OK: {n} bet(s) parsed cleanly, config valid.")
+
+
+@cli.command()
+@click.option("--vault", type=click.Path(path_type=Path, exists=True),
+              default=None)
+def reindex(vault):
+    """Regenerate BETS.md from active bet files."""
+    root, cfg = _load_vault(vault)
+    bets_dir = root / cfg.brain.bets_dir
+    bets_with_paths = []
+    for path in sorted(bets_dir.glob("bet_*.md")):
+        from cns.bet import load_bet
+        bet = load_bet(path)
+        if bet.status == BetStatus.ACTIVE:
+            bets_with_paths.append((bet, path.name))
+    text = render_bets_index(bets_with_paths, cfg.roles)
+    out = root / cfg.brain.bets_index
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text + "\n", encoding="utf-8")
+    click.echo(f"Wrote {out} ({len(bets_with_paths)} active bets)")
+
+
+@cli.command()
+@click.option("--vault", type=click.Path(path_type=Path, exists=True),
+              default=None)
+@click.option("--today", default=None,
+              help="Override today's date (YYYY-MM-DD), for testing.")
+def detect(vault, today):
+    """Run conflict detection. Writes CONFLICTS.md and (optionally) updates daily note."""
+    root, cfg = _load_vault(vault)
+    today_d = date.fromisoformat(today) if today else date.today()
+
+    bets_dir = root / cfg.brain.bets_dir
+    bets_with_paths = []
+    for path in sorted(bets_dir.glob("bet_*.md")):
+        from cns.bet import load_bet
+        bet = load_bet(path)
+        if bet.status == BetStatus.ACTIVE:
+            bets_with_paths.append((bet, path.name))
+
+    sources = _build_signal_sources(cfg)
+    signals = []
+    for src in sources:
+        signals.extend(src.collect(vault_root=root,
+                                    window_hours=cfg.detection.window_hours))
+
+    detected = detect_conflicts(bets_with_paths, signals, cfg, today_d)
+
+    conflicts_path = root / cfg.brain.conflicts_file
+    existing = parse_conflicts_file(conflicts_path)
+
+    import subprocess
+    modified_today: set[str] = set()
+    result = subprocess.run(
+        ["git", "log", f"--since={cfg.detection.window_hours} hours ago",
+         "--name-only", "--pretty=format:", "--", cfg.brain.bets_dir],
+        cwd=root, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith(cfg.brain.bets_dir + "/"):
+                modified_today.add(line.removeprefix(cfg.brain.bets_dir + "/"))
+
+    merged = merge_detected(existing, detected, modified_today)
+    conflicts_path.parent.mkdir(parents=True, exist_ok=True)
+    conflicts_path.write_text(
+        render_conflicts_file(merged, cfg.roles, today_d) + "\n",
+        encoding="utf-8",
+    )
+    click.echo(f"Wrote {conflicts_path} ({len(merged)} conflicts)")
+
+    dr = cfg.automation.daily_report
+    if dr.daily_note_dir:
+        note = root / dr.daily_note_dir / f"{today_d.isoformat()}.md"
+        if note.exists():
+            if dr.inject_tldr_line and merged:
+                oldest = max((today_d - c.first_detected).days for c in merged)
+                inject_tldr_line(note, len(merged), oldest)
+            append_conflicts_section(
+                note, merged, today_d,
+                conflicts_file_path=cfg.brain.conflicts_file,
+            )
+            click.echo(f"Updated daily note {note}")
