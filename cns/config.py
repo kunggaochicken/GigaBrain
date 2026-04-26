@@ -1,35 +1,37 @@
 """Load and locate `.cns/config.yaml` from a vault root."""
 
 from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional
+
 import pydantic
 import yaml
+
 from cns.models import Config
 
 
-class ConfigNotFound(FileNotFoundError):
+class ConfigNotFoundError(FileNotFoundError):
     pass
 
 
-class ConfigInvalid(ValueError):
+class ConfigInvalidError(ValueError):
     pass
 
 
 def load_config(path: Path) -> Config:
     if not path.exists():
-        raise ConfigNotFound(f"no config at {path}")
+        raise ConfigNotFoundError(f"no config at {path}")
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        raise ConfigInvalid(f"invalid YAML in {path}: {e}") from e
+        raise ConfigInvalidError(f"invalid YAML in {path}: {e}") from e
     try:
         return Config(**data)
     except pydantic.ValidationError as e:
-        raise ConfigInvalid(f"invalid config in {path}: {e}") from e
+        raise ConfigInvalidError(f"invalid config in {path}: {e}") from e
 
 
-def find_vault_root(start: Path) -> Optional[Path]:
+def find_vault_root(start: Path) -> Path | None:
     """Walk up from `start` looking for a `.cns/config.yaml`. Returns vault root or None."""
     current = start.resolve()
     while True:

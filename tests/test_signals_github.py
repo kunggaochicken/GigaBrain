@@ -1,19 +1,29 @@
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 from cns.signals import GitHubPRsSignal
 
+
 def test_github_prs_returns_recently_merged_prs():
-    now = datetime.now(timezone.utc)
-    fake_response = json.dumps([
-        {"number": 195, "title": "fix: pagination cap",
-         "body": "Three small fixes including scipy dep",
-         "mergedAt": (now - timedelta(hours=2)).isoformat()},
-        {"number": 100, "title": "old PR",
-         "body": "ancient",
-         "mergedAt": (now - timedelta(days=30)).isoformat()},
-    ])
+    now = datetime.now(UTC)
+    fake_response = json.dumps(
+        [
+            {
+                "number": 195,
+                "title": "fix: pagination cap",
+                "body": "Three small fixes including scipy dep",
+                "mergedAt": (now - timedelta(hours=2)).isoformat(),
+            },
+            {
+                "number": 100,
+                "title": "old PR",
+                "body": "ancient",
+                "mergedAt": (now - timedelta(days=30)).isoformat(),
+            },
+        ]
+    )
     src = GitHubPRsSignal(repos=["GigaFlow-AI/gigaflow"], auth="gh_cli")
 
     with patch("cns.signals.subprocess.run") as run:
@@ -24,6 +34,7 @@ def test_github_prs_returns_recently_merged_prs():
     assert "pagination cap" in signals[0].content
     assert "scipy" in signals[0].content
     assert signals[0].source == "github:GigaFlow-AI/gigaflow#195"
+
 
 def test_github_prs_skips_repo_when_gh_fails():
     src = GitHubPRsSignal(repos=["x/y"], auth="gh_cli")

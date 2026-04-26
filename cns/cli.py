@@ -1,19 +1,23 @@
 """CLI entry points: `cns validate`, `cns reindex`, `cns detect`."""
 
 from __future__ import annotations
+
 from datetime import date
 from pathlib import Path
+
 import click
-from cns.config import load_config, find_vault_root, ConfigNotFound, ConfigInvalid
-from cns.bet import list_bets
-from cns.models import BetStatus
-from cns.index import render_bets_index
+
+from cns.config import ConfigInvalidError, ConfigNotFoundError, find_vault_root, load_config
 from cns.conflicts import (
-    parse_conflicts_file, render_conflicts_file, merge_detected,
+    merge_detected,
+    parse_conflicts_file,
+    render_conflicts_file,
 )
+from cns.daily_report import append_conflicts_section, inject_tldr_line
 from cns.detector import detect_conflicts
-from cns.signals import VaultDirSignal, GitCommitsSignal, GitHubPRsSignal
-from cns.daily_report import inject_tldr_line, append_conflicts_section
+from cns.index import render_bets_index
+from cns.models import BetStatus
+from cns.signals import GitCommitsSignal, GitHubPRsSignal, VaultDirSignal
 
 
 def _load_vault(vault: Path | None):
@@ -22,8 +26,8 @@ def _load_vault(vault: Path | None):
         raise click.ClickException("no vault root found (no .cns/config.yaml in cwd or ancestors)")
     try:
         cfg = load_config(root / ".cns/config.yaml")
-    except (ConfigNotFound, ConfigInvalid) as e:
-        raise click.ClickException(str(e))
+    except (ConfigNotFoundError, ConfigInvalidError) as e:
+        raise click.ClickException(str(e)) from e
     return root, cfg
 
 
@@ -35,8 +39,7 @@ def _build_signal_sources(cfg):
         elif s.kind == "git_commits":
             out.append(GitCommitsSignal(repos=s.repos or []))
         elif s.kind == "github_prs":
-            out.append(GitHubPRsSignal(repos=s.repos or [],
-                                        auth=s.auth or "gh_cli"))
+            out.append(GitHubPRsSignal(repos=s.repos or [], auth=s.auth or "gh_cli"))
     return out
 
 
@@ -46,10 +49,15 @@ def cli():
 
 
 @cli.command()
-@click.option("--vault", type=click.Path(path_type=Path),
-              default=None, help="Vault root (default: cwd)")
-@click.option("--preset", type=click.Choice(["solo-founder", "engineering-lead", "minimal"]),
-              default="minimal", help="Config preset to use")
+@click.option(
+    "--vault", type=click.Path(path_type=Path), default=None, help="Vault root (default: cwd)"
+)
+@click.option(
+    "--preset",
+    type=click.Choice(["solo-founder", "engineering-lead", "minimal"]),
+    default="minimal",
+    help="Config preset to use",
+)
 def bootstrap(vault, preset):
     """Initialize CNS in a vault with a default config (use --preset for richer presets)."""
     root = vault or Path.cwd()
@@ -83,24 +91,32 @@ def bootstrap(vault, preset):
     click.echo(f"  config: {config_path}")
     click.echo(f"  bets dir: {bets_dir}")
     click.echo(f"  conflicts: {conflicts_path}")
-    click.echo("Next: write a bet (cp templates/bet.md.template <bets_dir>/bet_<slug>.md), then `cns reindex` and `cns detect`.")
+    click.echo(
+        "Next: write a bet (cp templates/bet.md.template <bets_dir>/bet_<slug>.md), "
+        "then `cns reindex` and `cns detect`."
+    )
 
 
 @cli.command()
-@click.option("--vault", type=click.Path(path_type=Path, exists=True),
-              default=None, help="Vault root (auto-detected if omitted)")
+@click.option(
+    "--vault",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help="Vault root (auto-detected if omitted)",
+)
 def validate(vault):
     """Validate config and bet files."""
     try:
         root, cfg = _load_vault(vault)
-    except (ConfigNotFound, ConfigInvalid, click.ClickException) as e:
-        raise click.ClickException(str(e))
+    except (ConfigNotFoundError, ConfigInvalidError, click.ClickException) as e:
+        raise click.ClickException(str(e)) from e
     bets_dir = root / cfg.brain.bets_dir
     n = 0
     errors = []
     for path in sorted(bets_dir.glob("bet_*.md")):
         try:
             from cns.bet import load_bet
+
             load_bet(path)
             n += 1
         except Exception as e:
@@ -114,8 +130,7 @@ def validate(vault):
 
 
 @cli.command()
-@click.option("--vault", type=click.Path(path_type=Path, exists=True),
-              default=None)
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
 def reindex(vault):
     """Regenerate BETS.md from active bet files."""
     root, cfg = _load_vault(vault)
@@ -124,6 +139,7 @@ def reindex(vault):
     for path in sorted(bets_dir.glob("bet_*.md")):
         try:
             from cns.bet import load_bet
+
             bet = load_bet(path)
         except Exception as e:
             click.echo(f"warning: skipping malformed bet {path.name}: {e}", err=True)
@@ -138,10 +154,8 @@ def reindex(vault):
 
 
 @cli.command()
-@click.option("--vault", type=click.Path(path_type=Path, exists=True),
-              default=None)
-@click.option("--today", default=None,
-              help="Override today's date (YYYY-MM-DD), for testing.")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+@click.option("--today", default=None, help="Override today's date (YYYY-MM-DD), for testing.")
 def detect(vault, today):
     """Run conflict detection. Writes CONFLICTS.md and (optionally) updates daily note."""
     root, cfg = _load_vault(vault)
@@ -152,6 +166,7 @@ def detect(vault, today):
     for path in sorted(bets_dir.glob("bet_*.md")):
         try:
             from cns.bet import load_bet
+
             bet = load_bet(path)
         except Exception as e:
             click.echo(f"warning: skipping malformed bet {path.name}: {e}", err=True)
@@ -162,8 +177,7 @@ def detect(vault, today):
     sources = _build_signal_sources(cfg)
     signals = []
     for src in sources:
-        signals.extend(src.collect(vault_root=root,
-                                    window_hours=cfg.detection.window_hours))
+        signals.extend(src.collect(vault_root=root, window_hours=cfg.detection.window_hours))
 
     detected = detect_conflicts(bets_with_paths, signals, cfg, today_d)
 
@@ -171,12 +185,22 @@ def detect(vault, today):
     existing = parse_conflicts_file(conflicts_path)
 
     import subprocess
+
     modified_today: set[str] = set()
     try:
         result = subprocess.run(
-            ["git", "log", f"--since={cfg.detection.window_hours} hours ago",
-             "--name-only", "--pretty=format:", "--", cfg.brain.bets_dir],
-            cwd=root, capture_output=True, text=True,
+            [
+                "git",
+                "log",
+                f"--since={cfg.detection.window_hours} hours ago",
+                "--name-only",
+                "--pretty=format:",
+                "--",
+                cfg.brain.bets_dir,
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
         )
     except FileNotFoundError:
         result = None
@@ -202,7 +226,9 @@ def detect(vault, today):
                 oldest = max((today_d - c.first_detected).days for c in merged)
                 inject_tldr_line(note, len(merged), oldest)
             append_conflicts_section(
-                note, merged, today_d,
+                note,
+                merged,
+                today_d,
                 conflicts_file_path=cfg.brain.conflicts_file,
             )
             click.echo(f"Updated daily note {note}")

@@ -13,9 +13,11 @@ Format (sectioned by owner role, sub-sorted by detection age):
 """
 
 from __future__ import annotations
+
 import re
 from datetime import date
 from pathlib import Path
+
 from cns.models import Conflict, RoleSpec
 
 
@@ -59,17 +61,21 @@ def parse_conflicts_file(path: Path) -> list[Conflict]:
             trigger = _extract(block, r"\*\*Trigger:\*\*\s*(.+?)(?:\n|$)")
             note = _extract(block, r"\*\*Detector note:\*\*\s*(.+?)(?:\n|$)") or ""
             first_detected_raw = _extract(block, r"\*\*First detected:\*\*\s*(\d{4}-\d{2}-\d{2})")
-            detected = date.fromisoformat(first_detected_raw) if first_detected_raw else date.today()
+            detected = (
+                date.fromisoformat(first_detected_raw) if first_detected_raw else date.today()
+            )
             if bet_file and not bet_file.endswith(".md"):
                 bet_file += ".md"
-            out.append(Conflict(
-                id=cid,
-                bet_file=bet_file or "",
-                owner=owner,
-                trigger=trigger or "",
-                detector_note=note,
-                first_detected=detected,
-            ))
+            out.append(
+                Conflict(
+                    id=cid,
+                    bet_file=bet_file or "",
+                    owner=owner,
+                    trigger=trigger or "",
+                    detector_note=note,
+                    first_detected=detected,
+                )
+            )
     return out
 
 

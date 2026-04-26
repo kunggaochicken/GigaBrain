@@ -1,9 +1,11 @@
 """Inject CNS lines into an existing daily-note file (e.g., the CEO daily report)."""
 
 from __future__ import annotations
+
 import re
 from datetime import date
 from pathlib import Path
+
 from cns.models import Conflict
 
 _TLDR_HEADER = re.compile(r"^## TL;DR\s*$", re.MULTILINE)
@@ -38,8 +40,7 @@ def append_conflicts_section(
     text = note.read_text(encoding="utf-8")
     if "## Conflicts to Spar" in text:
         return
-    lines = ["", "## Conflicts to Spar", "",
-             f"See [[{conflicts_file_path}]] for full queue.", ""]
+    lines = ["", "## Conflicts to Spar", "", f"See [[{conflicts_file_path}]] for full queue.", ""]
     for c in sorted(conflicts, key=lambda c: c.first_detected):
         n = c.days_open(today)
         unit = "day" if n == 1 else "days"

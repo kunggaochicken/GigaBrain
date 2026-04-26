@@ -1,13 +1,15 @@
 """Pydantic models for CNS: Bet, Config, Conflict."""
 
 from __future__ import annotations
+
 from datetime import date
-from enum import Enum
-from typing import Literal, Optional
+from enum import StrEnum
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
-class BetStatus(str, Enum):
+class BetStatus(StrEnum):
     ACTIVE = "active"
     SUPERSEDED = "superseded"
     KILLED = "killed"
@@ -26,19 +28,19 @@ class Bet(BaseModel):
     owner: str  # validated against config.roles at vault-load time, not here
     horizon: str  # validated against config.horizons at vault-load time
     confidence: Confidence
-    supersedes: Optional[str] = None
+    supersedes: str | None = None
     created: date
     last_reviewed: date
     kill_criteria: str  # required; "unspecified — needs sparring" is a valid value
-    deferred_until: Optional[date] = None
+    deferred_until: date | None = None
 
     # Body fields parsed from the markdown sections (filled by bet.py, not in YAML)
-    body_the_bet: Optional[str] = None
-    body_why: Optional[str] = None
-    body_what_would_change_this: Optional[str] = None
-    body_open_threads: Optional[str] = None
-    body_linked: Optional[str] = None
-    body_tombstone: Optional[str] = None
+    body_the_bet: str | None = None
+    body_why: str | None = None
+    body_what_would_change_this: str | None = None
+    body_open_threads: str | None = None
+    body_linked: str | None = None
+    body_tombstone: str | None = None
 
 
 class BrainPaths(BaseModel):
@@ -46,7 +48,7 @@ class BrainPaths(BaseModel):
     bets_dir: str
     bets_index: str
     conflicts_file: str
-    archive_dir: Optional[str] = None
+    archive_dir: str | None = None
 
 
 class RoleSpec(BaseModel):
@@ -56,9 +58,9 @@ class RoleSpec(BaseModel):
 
 class SignalSource(BaseModel):
     kind: Literal["vault_dir", "git_commits", "github_prs"]
-    path: Optional[str] = None
-    repos: Optional[list[str]] = None
-    auth: Optional[str] = None
+    path: str | None = None
+    repos: list[str] | None = None
+    auth: str | None = None
 
 
 class DetectionConfig(BaseModel):
@@ -71,7 +73,7 @@ class DetectionConfig(BaseModel):
 class DailyReportConfig(BaseModel):
     integration: Literal["optional", "required", "none"] = "none"
     inject_tldr_line: bool = False
-    daily_note_dir: Optional[str] = None
+    daily_note_dir: str | None = None
 
 
 class AutomationConfig(BaseModel):

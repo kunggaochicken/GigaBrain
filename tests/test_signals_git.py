@@ -1,9 +1,12 @@
 import subprocess
 from pathlib import Path
+
 from cns.signals import GitCommitsSignal
+
 
 def _git(cwd: Path, *args: str):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
 
 def test_git_commits_returns_recent_subjects_and_bodies(tmp_path):
     repo = tmp_path / "repo"
