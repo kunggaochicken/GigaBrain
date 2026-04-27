@@ -1,10 +1,11 @@
 """Signal source loaders. A signal is a piece of recent text the detector compares to bets."""
 
 from __future__ import annotations
+
 import json as _json
 import subprocess
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -13,6 +14,12 @@ from typing import Protocol
 class Signal:
     source: str  # e.g., "vault_dir:Daily" or "git:gigaflow#abc123"
     content: str  # text body to substring-match against bets
+    # Date the signal was produced. Used by the detector to suppress
+    # already-reviewed conflicts (issue #13). For sources without a native
+    # timestamp (e.g., a static memory file), collectors fall back to the
+    # underlying file's mtime. None means "unknown" — detector treats unknown
+    # timestamps as fresh (does not suppress).
+    timestamp: date | None = field(default=None)
 
 
 class SignalSource(Protocol):
@@ -29,9 +36,18 @@ class VaultDirSignal:
             return []
         try:
             result = subprocess.run(
-                ["git", "log", f"--since={window_hours} hours ago",
-                 "--name-only", "--pretty=format:", "--", self.path],
-                cwd=vault_root, capture_output=True, text=True,
+                [
+                    "git",
+                    "log",
+                    f"--since={window_hours} hours ago",
+                    "--name-only",
+                    "--pretty=format:",
+                    "--",
+                    self.path,
+                ],
+                cwd=vault_root,
+                capture_output=True,
+                text=True,
             )
         except FileNotFoundError:
             return []
@@ -49,7 +65,11 @@ class VaultDirSignal:
                 content = full.read_text(encoding="utf-8")
             except OSError:
                 continue
-            signals.append(Signal(source=f"vault_dir:{self.path}", content=content))
+            try:
+                ts = date.fromtimestamp(full.stat().st_mtime)
+            except OSError:
+                ts = None
+            signals.append(Signal(source=f"vault_dir:{self.path}", content=content, timestamp=ts))
         return signals
 
 
@@ -65,9 +85,15 @@ class GitCommitsSignal:
                 continue
             try:
                 result = subprocess.run(
-                    ["git", "log", f"--since={window_hours} hours ago",
-                     "--pretty=format:%H%x00%s%x00%b%x1e"],
-                    cwd=repo_path, capture_output=True, text=True,
+                    [
+                        "git",
+                        "log",
+                        f"--since={window_hours} hours ago",
+                        "--pretty=format:%H%x00%cI%x00%s%x00%b%x1e",
+                    ],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
                 )
             except FileNotFoundError:
                 continue
@@ -78,15 +104,25 @@ class GitCommitsSignal:
                 if not entry:
                     continue
                 parts = entry.split("\x00")
-                if len(parts) < 2:
+                if len(parts) < 3:
                     continue
                 sha = parts[0][:7]
-                subject = parts[1]
-                body = parts[2] if len(parts) > 2 else ""
-                signals.append(Signal(
-                    source=f"git:{rel}#{sha}",
-                    content=f"{subject}\n\n{body}".strip(),
-                ))
+                committed_iso = parts[1]
+                subject = parts[2]
+                body = parts[3] if len(parts) > 3 else ""
+                ts: date | None = None
+                if committed_iso:
+                    try:
+                        ts = datetime.fromisoformat(committed_iso).date()
+                    except ValueError:
+                        ts = None
+                signals.append(
+                    Signal(
+                        source=f"git:{rel}#{sha}",
+                        content=f"{subject}\n\n{body}".strip(),
+                        timestamp=ts,
+                    )
+                )
         return signals
 
 
@@ -96,15 +132,26 @@ class GitHubPRsSignal:
     auth: str = "gh_cli"
 
     def collect(self, vault_root: Path, window_hours: int) -> list[Signal]:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=window_hours)
         signals: list[Signal] = []
         for repo in self.repos:
             try:
                 result = subprocess.run(
-                    ["gh", "pr", "list", "--repo", repo, "--state", "merged",
-                     "--limit", "50",
-                     "--json", "number,title,body,mergedAt"],
-                    capture_output=True, text=True,
+                    [
+                        "gh",
+                        "pr",
+                        "list",
+                        "--repo",
+                        repo,
+                        "--state",
+                        "merged",
+                        "--limit",
+                        "50",
+                        "--json",
+                        "number,title,body,mergedAt",
+                    ],
+                    capture_output=True,
+                    text=True,
                 )
             except FileNotFoundError:
                 continue
@@ -122,8 +169,11 @@ class GitHubPRsSignal:
                 if merged_at < cutoff:
                     continue
                 content = f"{pr['title']}\n\n{pr.get('body') or ''}".strip()
-                signals.append(Signal(
-                    source=f"github:{repo}#{pr['number']}",
-                    content=content,
-                ))
+                signals.append(
+                    Signal(
+                        source=f"github:{repo}#{pr['number']}",
+                        content=content,
+                        timestamp=merged_at.date(),
+                    )
+                )
         return signals

@@ -4,11 +4,14 @@ Bet files are markdown with YAML frontmatter. Body is a fixed set of H2 sections
 """
 
 from __future__ import annotations
+
 import re
+from datetime import date as _date
 from pathlib import Path
-from typing import Optional
+
 import frontmatter
 import yaml
+
 from cns.models import Bet, BetStatus
 
 SECTION_HEADERS = [
@@ -49,10 +52,7 @@ def load_bet(path: Path) -> Bet:
 
 def write_bet(path: Path, bet: Bet) -> None:
     """Serialize a Bet model to disk as frontmatter + sectioned markdown."""
-    fm_fields = {
-        k: v for k, v in bet.model_dump(mode="json").items()
-        if not k.startswith("body_")
-    }
+    fm_fields = {k: v for k, v in bet.model_dump(mode="json").items() if not k.startswith("body_")}
     body_parts: list[str] = []
     canonical_titles = {
         "body_the_bet": "The bet",
@@ -72,7 +72,7 @@ def write_bet(path: Path, bet: Bet) -> None:
     path.write_text(f"---\n{fm_yaml}\n---\n\n{body}", encoding="utf-8")
 
 
-def list_bets(bets_dir: Path, status: Optional[BetStatus] = None) -> list[Bet]:
+def list_bets(bets_dir: Path, status: BetStatus | None = None) -> list[Bet]:
     """List bets in the directory, optionally filtered by status."""
     out: list[Bet] = []
     for path in sorted(bets_dir.glob("bet_*.md")):
@@ -83,3 +83,92 @@ def list_bets(bets_dir: Path, status: Optional[BetStatus] = None) -> list[Bet]:
         if status is None or bet.status == status:
             out.append(bet)
     return out
+
+
+def slugify_bet_name(name: str) -> str:
+    """Lowercase + snake_case + strip punctuation. Used for filename derivation."""
+    s = name.lower()
+    s = re.sub(r"[^a-z0-9]+", "_", s)
+    return s.strip("_")
+
+
+def _next_available_slug(bets_dir: Path, slug: str) -> str:
+    """Append _2, _3, ... if `bet_<slug>.md` already exists in bets_dir."""
+    base = slug
+    i = 2
+    while (bets_dir / f"bet_{slug}.md").exists():
+        slug = f"{base}_{i}"
+        i += 1
+    return slug
+
+
+def create_bet(
+    *,
+    bets_dir: Path,
+    name: str,
+    description: str,
+    owner: str,
+    horizon: str,
+    confidence: str,
+    kill_criteria: str,
+    today: _date,
+    body_the_bet: str | None = None,
+    body_why: str | None = None,
+    body_what_would_change_this: str | None = None,
+    body_open_threads: str | None = None,
+    body_linked: str | None = None,
+    supersedes: str | None = None,
+) -> Path:
+    """Create and write a new bet file. Returns the path written.
+
+    If `supersedes` is set, the named bet file must exist in bets_dir; it will
+    be marked `superseded` with a `## Tombstone` section appended.
+    """
+    bets_dir.mkdir(parents=True, exist_ok=True)
+    slug = _next_available_slug(bets_dir, slugify_bet_name(name))
+    target = bets_dir / f"bet_{slug}.md"
+
+    # Pre-validate the supersedes target before any writes so we fail loud and
+    # leave the vault unchanged on a typo'd filename.
+    old_path: Path | None = None
+    if supersedes:
+        old_path = bets_dir / supersedes
+        if not old_path.exists():
+            raise FileNotFoundError(f"supersedes target not found: {old_path}")
+
+    # Write the new bet first. If this fails (disk full, serialization bug, ...)
+    # the vault keeps its old state — better than tombstoning the old bet with
+    # a "Replaced by" link to a file that doesn't exist.
+    new_bet = Bet(
+        name=name,
+        description=description,
+        status=BetStatus.ACTIVE,
+        owner=owner,
+        horizon=horizon,
+        confidence=confidence,
+        supersedes=supersedes,
+        created=today,
+        last_reviewed=today,
+        kill_criteria=kill_criteria,
+        body_the_bet=body_the_bet,
+        body_why=body_why,
+        body_what_would_change_this=body_what_would_change_this,
+        body_open_threads=body_open_threads,
+        body_linked=body_linked,
+    )
+    write_bet(target, new_bet)
+
+    # Now mark the predecessor as superseded. Failure here leaves an orphan
+    # new bet (visible/recoverable), not a dangling tombstone.
+    if old_path is not None:
+        old = load_bet(old_path)
+        old.status = BetStatus.SUPERSEDED
+        old.body_tombstone = (
+            f"Final call: {old.body_the_bet or ''}\n"
+            f"Why it died: superseded by a newer call.\n"
+            f"Replaced by: [[{target.stem}]]\n"
+            f"Date: {today.isoformat()}"
+        )
+        write_bet(old_path, old)
+
+    return target

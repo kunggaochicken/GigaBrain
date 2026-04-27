@@ -1,13 +1,15 @@
 """Pydantic models for CNS: Bet, Config, Conflict."""
 
 from __future__ import annotations
+
 from datetime import date
-from enum import Enum
-from typing import Literal, Optional
+from enum import StrEnum
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
-class BetStatus(str, Enum):
+class BetStatus(StrEnum):
     ACTIVE = "active"
     SUPERSEDED = "superseded"
     KILLED = "killed"
@@ -15,6 +17,7 @@ class BetStatus(str, Enum):
 
 
 Confidence = Literal["low", "medium", "high"]
+WorkspaceMode = Literal["read-only", "read-write"]
 
 
 class Bet(BaseModel):
@@ -26,19 +29,19 @@ class Bet(BaseModel):
     owner: str  # validated against config.roles at vault-load time, not here
     horizon: str  # validated against config.horizons at vault-load time
     confidence: Confidence
-    supersedes: Optional[str] = None
+    supersedes: str | None = None
     created: date
     last_reviewed: date
     kill_criteria: str  # required; "unspecified — needs sparring" is a valid value
-    deferred_until: Optional[date] = None
+    deferred_until: date | None = None
 
     # Body fields parsed from the markdown sections (filled by bet.py, not in YAML)
-    body_the_bet: Optional[str] = None
-    body_why: Optional[str] = None
-    body_what_would_change_this: Optional[str] = None
-    body_open_threads: Optional[str] = None
-    body_linked: Optional[str] = None
-    body_tombstone: Optional[str] = None
+    body_the_bet: str | None = None
+    body_why: str | None = None
+    body_what_would_change_this: str | None = None
+    body_open_threads: str | None = None
+    body_linked: str | None = None
+    body_tombstone: str | None = None
 
 
 class BrainPaths(BaseModel):
@@ -46,19 +49,63 @@ class BrainPaths(BaseModel):
     bets_dir: str
     bets_index: str
     conflicts_file: str
-    archive_dir: Optional[str] = None
+    archive_dir: str | None = None
+
+
+class Workspace(BaseModel):
+    path: str
+    mode: WorkspaceMode
+
+
+class ToolPolicy(BaseModel):
+    bash_allowlist: list[str] = Field(default_factory=list)
+    web: bool = False
 
 
 class RoleSpec(BaseModel):
     id: str
     name: str
+    reports_to: str | None = None
+    workspaces: list[Workspace] = Field(default_factory=list)
+    tools: ToolPolicy = Field(default_factory=ToolPolicy)
+    persona: str | None = None
+
+    @model_validator(mode="after")
+    def _no_overlapping_workspaces(self):
+        # Detect path overlap (one workspace contained in another). The hook's
+        # path-enforcement uses first-match semantics; overlap with mismatched
+        # modes would silently block legitimate writes. Reject at config time.
+        from pathlib import PurePosixPath
+
+        normalized = [(PurePosixPath(w.path), w) for w in self.workspaces]
+        for i, (a_path, a) in enumerate(normalized):
+            for b_path, b in normalized[i + 1 :]:
+                if _path_contains(a_path, b_path) or _path_contains(b_path, a_path):
+                    raise ValueError(
+                        f"role '{self.id}' has overlapping workspaces "
+                        f"'{a.path}' and '{b.path}'; declare a single workspace "
+                        f"covering both."
+                    )
+        return self
+
+
+def _path_contains(outer, inner) -> bool:
+    """True if `outer` is an ancestor of `inner` (string-comparison only).
+
+    No filesystem access — just lexical comparison of normalized parts.
+    Equal paths count as containment (a workspace overlaps itself trivially,
+    but the dedupe handled above by the i+1 slice avoids the self-pair).
+    """
+    o = outer.parts
+    i = inner.parts
+    return len(o) <= len(i) and i[: len(o)] == o
 
 
 class SignalSource(BaseModel):
     kind: Literal["vault_dir", "git_commits", "github_prs"]
-    path: Optional[str] = None
-    repos: Optional[list[str]] = None
-    auth: Optional[str] = None
+    path: str | None = None
+    repos: list[str] | None = None
+    auth: str | None = None
 
 
 class DetectionConfig(BaseModel):
@@ -71,20 +118,62 @@ class DetectionConfig(BaseModel):
 class DailyReportConfig(BaseModel):
     integration: Literal["optional", "required", "none"] = "none"
     inject_tldr_line: bool = False
-    daily_note_dir: Optional[str] = None
+    daily_note_dir: str | None = None
 
 
 class AutomationConfig(BaseModel):
     daily_report: DailyReportConfig = Field(default_factory=DailyReportConfig)
 
 
+class ExecutionConfig(BaseModel):
+    reviews_dir: str = "Brain/Reviews"
+    top_level_leader: str
+    default_filter: Literal["pending", "all"] = "pending"
+    artifact_max_files: int = 50
+
+
 class Config(BaseModel):
+    schema_version: int = 1  # 1 = legacy, 2 = execution-aware
     brain: BrainPaths
     roles: list[RoleSpec]
     horizons: dict[str, int]
     signal_sources: list[SignalSource]
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
+    execution: ExecutionConfig | None = None
+
+    @model_validator(mode="after")
+    def _valid_role_tree(self):
+        # Validate the tree shape when EITHER any role uses reports_to OR an
+        # execution block is present. The latter implies the user has opted
+        # into the new schema and silently-flat configs would let an
+        # ill-defined "root" sneak through _execution_top_level_leader_is_root.
+        opted_in = any(r.reports_to is not None for r in self.roles) or self.execution is not None
+        if not opted_in:
+            # All flat, no execution block: skip. Keeps legacy sample vaults working.
+            return self
+        # Deferred import: cns.roles imports RoleSpec from this module;
+        # a top-level import would be a cycle.
+        from cns.roles import validate_role_tree
+
+        validate_role_tree(self.roles)
+        return self
+
+    @model_validator(mode="after")
+    def _execution_top_level_leader_is_root(self):
+        if self.execution is None:
+            return self
+        # Deferred import: cns.roles imports RoleSpec from this module;
+        # a top-level import would be a cycle.
+        from cns.roles import find_root_role
+
+        root = find_root_role(self.roles)
+        if self.execution.top_level_leader != root.id:
+            raise ValueError(
+                f"execution.top_level_leader='{self.execution.top_level_leader}' "
+                f"must match the root role id='{root.id}'"
+            )
+        return self
 
     @model_validator(mode="after")
     def _unique_role_ids(self):
