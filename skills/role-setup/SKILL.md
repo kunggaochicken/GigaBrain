@@ -33,17 +33,16 @@ description: Add, edit, or delete roles in .cns/config.yaml. Loads from template
       - `tools.bash_allowlist` — show defaults, ask if user wants to add or remove
       - `persona` — show default, ask if user wants to edit
 
-   d. **Append to `.cns/config.yaml`** using `ruamel.yaml` (round-trip mode) so existing comments and ordering are preserved:
+   d. **Append to `.cns/config.yaml`** using PyYAML:
       ```python
-      from ruamel.yaml import YAML
-      yaml = YAML()
-      yaml.preserve_quotes = True
+      import yaml
       with open(cfg_path) as f:
-          data = yaml.load(f)
+          data = yaml.safe_load(f)
       data["roles"].append(new_role_dict)
       with open(cfg_path, "w") as f:
-          yaml.dump(data, f)
+          yaml.safe_dump(data, f, sort_keys=False)
       ```
+      Note: `yaml.safe_dump` does not preserve comments; for comment-heavy configs, edit by hand in a YAML-aware editor instead.
 
    e. **Re-validate the full config** by running `cns validate`. If validation fails (e.g., a cycle was introduced), print the error and offer to revert.
 
@@ -53,7 +52,7 @@ description: Add, edit, or delete roles in .cns/config.yaml. Loads from template
 
    b. Walk each field prefilled with current value; user can keep or change.
 
-   c. Write back via the same `ruamel.yaml` round-trip.
+   c. Write back via the same `yaml.safe_load` / `yaml.safe_dump` pattern.
 
    d. Re-validate.
 
@@ -71,7 +70,7 @@ description: Add, edit, or delete roles in .cns/config.yaml. Loads from template
 
 ## Constraints
 
-- NEVER write directly to `.cns/config.yaml` with `yaml.safe_dump` — use `ruamel.yaml` round-trip so comments survive.
+- `yaml.safe_dump` does not preserve comments or key ordering. If the user has hand-edited `.cns/config.yaml` with comments they care about, prefer guiding them to edit by hand in a YAML-aware editor rather than round-tripping through this skill.
 - NEVER allow two roles with the same `id`.
 - NEVER allow a delete that would create dangling `reports_to` or orphan active bets.
 - When `reports_to` is set to a non-existent id, surface a clear error before writing.
