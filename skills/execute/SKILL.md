@@ -7,6 +7,8 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
 
 `/execute` reads active bets, dispatches a per-bet agent scoped to that bet's owner role's workspaces and tool allowlist, and parks each result in `Brain/Reviews/<bet-slug>/`. The leader reviews via `/spar`.
 
+> **v0.2 limitation — path scoping is prompt-enforced.** The `.cns/.agent-hooks/<bet-slug>.json` file is generated for forward-compatibility but is **NOT** consumed by any shipped hook executor. Path scoping is enforced **by prompt only** — the dispatched agent reads its system prompt and stays within its assigned workspace. A pre-tool-use hook that consumes this config will land in v0.3. See [#20](https://github.com/kunggaochicken/GigaBrain/issues/20).
+
 ## When to use
 
 - User says: "execute", "run my bets", "dispatch the work", "have the CTO do this"
@@ -29,7 +31,7 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
    Dispatch N agents? [y/N]
    ```
 
-4. **Write envelopes.** On confirmation, run `cns execute` (without `--dry-run`) to write hook configs and envelope materials to `.cns/.agent-hooks/<bet-slug>.json` and prepare `Brain/Reviews/<slug>/`.
+4. **Write envelopes.** On confirmation, run `cns execute` (without `--dry-run`) to drop a forward-compat hook descriptor at `.cns/.agent-hooks/<bet-slug>.json` and prepare `Brain/Reviews/<slug>/`. Note: in v0.2 that JSON file is **not** consumed by any shipped executor — it documents the intended scope but does not enforce it. Scoping is delivered to the agent via its system prompt in step 5.
 
 5. **For each dispatched bet, invoke the Agent tool.** Sequential in v1. For each `[DISPATCH]` item:
 
@@ -59,7 +61,7 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
 - NEVER edit bet files directly. `/spar` is the only writer of bet `status`.
 - NEVER move staged files into workspaces. That happens at `/spar` accept time.
 - ALWAYS validate every brief.md after the agent returns. A malformed brief is a real failure mode and the user needs to know.
-- ALWAYS clean up `.cns/.agent-hooks/<bet-slug>.json` after the run completes (or fail loudly if it can't be cleaned).
+- ALWAYS clean up `.cns/.agent-hooks/<bet-slug>.json` after the run completes (or fail loudly if it can't be cleaned). Cleanup is hygiene only — the file is not load-bearing in v0.2 (no shipped hook executor reads it; see the v0.2 limitation note above).
 - If a role has no workspaces (typically the leader role), skip it with a clear message — do NOT try to dispatch.
 
 ## Failure modes
