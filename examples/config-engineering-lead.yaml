@@ -5,14 +5,17 @@ brain:
   conflicts_file: Brain/CONFLICTS.md
 
 roles:
-  - id: engineer
-    name: Engineer
   - id: manager
     name: Manager
+  - id: engineer
+    name: Engineer
+    reports_to: manager
   - id: designer
     name: Designer
+    reports_to: manager
   - id: pm
     name: Product Manager
+    reports_to: manager
 
 horizons:
   this-week: 7

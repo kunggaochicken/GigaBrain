@@ -9,16 +9,22 @@ roles:
     name: CEO
   - id: cto
     name: CTO
+    reports_to: ceo
   - id: cso
     name: Chief Scientist Officer
+    reports_to: ceo
   - id: cmo
     name: CMO
+    reports_to: ceo
   - id: cpo
     name: CPO
+    reports_to: ceo
   - id: clo
     name: CLO
+    reports_to: ceo
   - id: cfo
     name: CFO
+    reports_to: ceo
 
 horizons:
   this-week: 7
