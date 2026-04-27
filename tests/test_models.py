@@ -219,3 +219,24 @@ def test_config_execution_leader_must_match_root():
             signal_sources=[],
             execution=ExecutionConfig(top_level_leader="cto"),  # wrong
         )
+
+
+def test_config_execution_with_flat_roles_forces_tree_validation():
+    """Regression: a flat config (no reports_to) plus an execution block
+    must NOT silently accept whichever role happens to be listed first as
+    the root. With execution set, multiple `reports_to=None` roles is
+    ambiguous and should fail."""
+    with pytest.raises(ValidationError, match="multiple roots"):
+        Config(
+            brain={"root": "Brain", "bets_dir": "Brain/Bets",
+                   "bets_index": "Brain/Bets/BETS.md",
+                   "conflicts_file": "Brain/CONFLICTS.md"},
+            roles=[
+                RoleSpec(id="cto", name="CTO"),  # no reports_to
+                RoleSpec(id="ceo", name="CEO"),  # no reports_to
+            ],
+            horizons={"this-week": 7, "this-month": 30,
+                      "this-quarter": 90, "strategic": 180},
+            signal_sources=[],
+            execution=ExecutionConfig(top_level_leader="ceo"),
+        )
