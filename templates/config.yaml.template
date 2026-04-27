@@ -1,3 +1,5 @@
+schema_version: 2
+
 brain:
   root: Brain
   bets_dir: Brain/Bets
@@ -8,6 +10,13 @@ brain:
 roles:
   - id: ceo
     name: CEO
+    reports_to: null
+    workspaces: []
+    tools:
+      bash_allowlist: []
+      web: false
+    persona: |
+      You are the CEO. Issue vision, not implementation.
 
 horizons:
   this-week: 7
@@ -28,3 +37,9 @@ automation:
     integration: none
     inject_tldr_line: false
     daily_note_dir: null
+
+execution:
+  reviews_dir: Brain/Reviews
+  top_level_leader: ceo
+  default_filter: pending
+  artifact_max_files: 50

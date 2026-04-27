@@ -1,6 +1,8 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from cns.models import (
@@ -266,3 +268,26 @@ def test_config_execution_with_flat_roles_forces_tree_validation():
             signal_sources=[],
             execution=ExecutionConfig(top_level_leader="ceo"),
         )
+
+
+def test_all_role_templates_parse():
+    """Each templates/roles/*.yaml must parse as a valid RoleSpec."""
+    root = Path(__file__).parent.parent / "templates/roles"
+    files = sorted(root.glob("*.yaml"))
+    assert len(files) >= 9
+    for path in files:
+        data = yaml.safe_load(path.read_text())
+        # Strip placeholder paths so the model accepts them.
+        for ws in data.get("workspaces") or []:
+            if ws["path"].startswith("<"):
+                ws["path"] = "/tmp/placeholder"
+        RoleSpec(**data)
+
+
+def test_config_template_parses():
+    """templates/config.yaml.template must load as a valid Config."""
+    text = (Path(__file__).parent.parent / "templates/config.yaml.template").read_text()
+    cfg = Config(**yaml.safe_load(text))
+    assert cfg.schema_version == 2
+    assert cfg.execution is not None
+    assert cfg.execution.top_level_leader == "ceo"
