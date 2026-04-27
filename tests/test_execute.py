@@ -1,5 +1,6 @@
 """Execute dispatcher — bet queue building."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from cns.execute import (
     DispatchSkipReason,
     NoExecutionConfigError,
+    build_agent_envelope,
     build_dispatch_queue,
 )
 from cns.models import (
@@ -234,3 +236,79 @@ def test_build_queue_no_execution_block_raises(tmp_path):
             owner_filter=None,
             include_pending=False,
         )
+
+
+def test_build_envelope_includes_persona_and_brief_schema(tmp_path):
+    cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(
+        item=item,
+        vault_root=tmp_path,
+        cfg=cfg,
+    )
+    assert "system_prompt" in env
+    assert "input_prompt" in env
+    assert "hook_config_path" in env
+    assert "review_dir" in env
+    # System prompt mentions writing brief.md and not including diffs
+    assert "brief.md" in env["system_prompt"]
+    assert "diff" in env["system_prompt"].lower()
+    # Input prompt carries the bet body
+    assert "ship_blog" in env["input_prompt"] or "body" in env["input_prompt"]
+
+
+def test_build_envelope_writes_hook_config(tmp_path):
+    cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(
+        item=item,
+        vault_root=tmp_path,
+        cfg=cfg,
+    )
+    hook_path = Path(env["hook_config_path"])
+    assert hook_path.exists()
+    data = json.loads(hook_path.read_text())
+    assert data["bet_slug"] == "ship_blog"
+    assert data["role"] == "cmo"
+
+
+def test_build_envelope_includes_related_bets_snapshot(tmp_path):
+    cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    _write_bet(bets_dir, "press_outreach", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter="ship_blog",
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(
+        item=item,
+        vault_root=tmp_path,
+        cfg=cfg,
+    )
+    snap = env["related_bets_snapshot"]
+    assert "contradicts" in snap
+    assert "same_topic_active" in snap
+    assert "same_topic_historical" in snap
