@@ -128,21 +128,17 @@ def create_bet(
     slug = _next_available_slug(bets_dir, slugify_bet_name(name))
     target = bets_dir / f"bet_{slug}.md"
 
+    # Pre-validate the supersedes target before any writes so we fail loud and
+    # leave the vault unchanged on a typo'd filename.
+    old_path: Path | None = None
     if supersedes:
         old_path = bets_dir / supersedes
         if not old_path.exists():
             raise FileNotFoundError(f"supersedes target not found: {old_path}")
-        old = load_bet(old_path)
-        old.status = BetStatus.SUPERSEDED
-        tomb = (
-            f"Final call: {old.body_the_bet or ''}\n"
-            f"Why it died: superseded by a newer call.\n"
-            f"Replaced by: [[{target.stem}]]\n"
-            f"Date: {today.isoformat()}"
-        )
-        old.body_tombstone = tomb
-        write_bet(old_path, old)
 
+    # Write the new bet first. If this fails (disk full, serialization bug, ...)
+    # the vault keeps its old state — better than tombstoning the old bet with
+    # a "Replaced by" link to a file that doesn't exist.
     new_bet = Bet(
         name=name,
         description=description,
@@ -161,4 +157,18 @@ def create_bet(
         body_linked=body_linked,
     )
     write_bet(target, new_bet)
+
+    # Now mark the predecessor as superseded. Failure here leaves an orphan
+    # new bet (visible/recoverable), not a dangling tombstone.
+    if old_path is not None:
+        old = load_bet(old_path)
+        old.status = BetStatus.SUPERSEDED
+        old.body_tombstone = (
+            f"Final call: {old.body_the_bet or ''}\n"
+            f"Why it died: superseded by a newer call.\n"
+            f"Replaced by: [[{target.stem}]]\n"
+            f"Date: {today.isoformat()}"
+        )
+        write_bet(old_path, old)
+
     return target
