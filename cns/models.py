@@ -81,6 +81,7 @@ class AutomationConfig(BaseModel):
 
 
 class Config(BaseModel):
+    schema_version: int = 1   # 1 = legacy, 2 = execution-aware
     brain: BrainPaths
     roles: list[RoleSpec]
     horizons: dict[str, int]
