@@ -349,7 +349,53 @@ def _execute_init(vault):
         "  default_filter: pending\n"
         "  artifact_max_files: 50\n"
     )
-    cfg_path.write_text(text.rstrip() + block, encoding="utf-8")
+    new_text = text.rstrip() + block
+
+    # Validate the prospective config BEFORE writing. Adding `execution:`
+    # opts the role tree into strict validation (see Config._valid_role_tree),
+    # so a flat roles list that was tolerated before would now be rejected.
+    # Failing after the write would leave the user with a bricked config.
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
+        tmp.write(new_text)
+        tmp_path = Path(tmp.name)
+    try:
+        load_config(tmp_path)
+    except ConfigInvalidError as e:
+        msg = str(e).replace(str(tmp_path), str(cfg_path))
+        hint = ""
+        if "multiple roots" in msg:
+            # Extract the offending ids if present so the hint is concrete.
+            import re
+
+            m = re.search(r"multiple roots:\s*([^\[\]]+?)(?:\s*\[|$)", msg)
+            ids_str = m.group(1).strip() if m else ""
+            non_leader = ""
+            if ids_str:
+                ids = [i.strip() for i in ids_str.split(",") if i.strip()]
+                non_leader = ", ".join(i for i in ids if i != root_role.id)
+            hint = (
+                "\n\nHint: an execution-aware config requires exactly one root role "
+                "(reports_to: null). Pick a leader (likely '"
+                f"{root_role.id}') and set `reports_to: {root_role.id}` on the other "
+                f"roles ({non_leader or 'all non-leader roles'}) in "
+                f"{cfg_path}, then re-run `cns execute init`."
+            )
+        elif "cycle" in msg or "dangling" in msg:
+            hint = (
+                "\n\nHint: fix the role tree in "
+                f"{cfg_path} (each non-leader role's `reports_to` must reference an "
+                "existing role id; exactly one role must have `reports_to: null` and "
+                "the graph must be acyclic), then re-run `cns execute init`."
+            )
+        raise click.ClickException(
+            f"refusing to write execution block — resulting config would be invalid:\n  {msg}{hint}"
+        ) from e
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    cfg_path.write_text(new_text, encoding="utf-8")
     (root / "Brain/Reviews").mkdir(parents=True, exist_ok=True)
     click.echo(f"Added execution{{}} block; top_level_leader='{root_role.id}'.")
 
