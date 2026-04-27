@@ -1,12 +1,14 @@
-"""Review entries: Brief schema and serialization.
+"""Review entries: Brief schema, serialization, and queue operations.
 
 A review entry lives at <reviews_dir>/<bet-slug>/ and contains:
-- brief.md       — frontmatter + sectioned markdown (this module's contract)
+- brief.md       — frontmatter + sectioned markdown
 - files/         — staged mirror of files the agent touched
 - transcript.md  — full agent transcript (audit-only)
 
-This module defines the `Brief` Pydantic model plus `load_brief` / `write_brief`.
-Queue operations (list_pending, accept, reject) are added in a follow-up task.
+Provides:
+- `Brief` model + `load_brief` / `write_brief`
+- Staging path mapping: `staged_path_for` / `workspace_path_from_staged`
+- Queue: `list_pending_reviews`, `accept_review`, `reject_review`
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal, Optional
 import re
+import shutil
+from datetime import datetime, timezone
 import frontmatter
 import yaml
 from pydantic import BaseModel, Field
@@ -125,3 +129,127 @@ def write_brief(path: Path, brief: Brief) -> None:
     fm_yaml = yaml.safe_dump(fm_fields, sort_keys=False, allow_unicode=True).strip()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{fm_yaml}\n---\n\n{body}", encoding="utf-8")
+
+
+class ReviewNotFound(FileNotFoundError):
+    pass
+
+
+def staged_path_for(workspace_path: str, review_dir: Path) -> Path:
+    """Map a workspace path to its staged location under review_dir/files/.
+
+    Rules (mirror of spec §4 "Staging path mapping rule"):
+    - Starts with `~`: expand against $HOME, then drop the leading `/`.
+    - Absolute path: drop the leading `/`.
+    - Vault-relative path: kept as-is.
+    """
+    if workspace_path.startswith("~"):
+        expanded = str(Path(workspace_path).expanduser())
+        rel = expanded.lstrip("/")
+    elif workspace_path.startswith("/"):
+        rel = workspace_path.lstrip("/")
+    else:
+        rel = workspace_path
+    return review_dir / "files" / rel
+
+
+def workspace_path_from_staged(staged: Path, review_dir: Path) -> Path:
+    """Inverse of `staged_path_for` for accept-time promotion.
+
+    The staged path is `<review_dir>/files/<path-with-leading-slash-stripped>`.
+    For absolute and ~-rooted originals the result is absolute.
+    For vault-relative originals the result is vault-relative — the caller is
+    responsible for re-anchoring against the vault root if needed.
+    """
+    files_root = review_dir / "files"
+    rel = staged.relative_to(files_root)
+    return Path("/" + str(rel))
+
+
+def list_pending_reviews(reviews_dir: Path) -> list[tuple[str, Brief]]:
+    """List pending review entries as (slug, brief) tuples, sorted by agent_run_id ascending.
+
+    Skips the `.archive/` directory and any non-pending briefs.
+    """
+    if not reviews_dir.exists():
+        return []
+    out: list[tuple[str, Brief]] = []
+    for child in sorted(reviews_dir.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        brief_path = child / "brief.md"
+        if not brief_path.exists():
+            continue
+        try:
+            brief = load_brief(brief_path)
+        except Exception:
+            continue  # malformed — surfaced separately
+        if brief.status == BriefStatus.PENDING:
+            out.append((child.name, brief))
+    out.sort(key=lambda pair: pair[1].agent_run_id)
+    return out
+
+
+def _archive_path(reviews_dir: Path, slug: str) -> Path:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    archive_root = reviews_dir / ".archive"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    return archive_root / f"{ts}_{slug}"
+
+
+def accept_review(reviews_dir: Path, slug: str) -> Path:
+    """Promote staged files into workspaces, mark brief accepted, archive the review.
+
+    Returns the archived review directory path.
+    Raises ReviewNotFound if no review exists at <reviews_dir>/<slug>/.
+    """
+    review_dir = reviews_dir / slug
+    brief_path = review_dir / "brief.md"
+    if not brief_path.exists():
+        raise ReviewNotFound(f"no review at {review_dir}")
+
+    brief = load_brief(brief_path)
+
+    # Promote each staged file to its original workspace path.
+    for ft in brief.files_touched:
+        staged = staged_path_for(ft.path, review_dir=review_dir)
+        if not staged.exists():
+            # Spec allows actions like "deleted" to have no staged content;
+            # for v1 we only promote what's actually staged.
+            continue
+        # Determine the original path (reverse the staging map).
+        if ft.path.startswith("~"):
+            target = Path(ft.path).expanduser()
+        elif ft.path.startswith("/"):
+            target = Path(ft.path)
+        else:
+            # Vault-relative: anchor under reviews_dir's parent (the vault root).
+            # reviews_dir is typically <vault>/Brain/Reviews; we walk up two.
+            vault_root = reviews_dir.parent.parent
+            target = vault_root / ft.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staged, target)
+
+    # Update brief status, then archive the whole review dir.
+    brief.status = BriefStatus.ACCEPTED
+    write_brief(brief_path, brief)
+    dest = _archive_path(reviews_dir, slug)
+    shutil.move(str(review_dir), str(dest))
+    return dest
+
+
+def reject_review(reviews_dir: Path, slug: str) -> Path:
+    """Mark brief rejected and move the review dir into .archive/. No workspace changes.
+
+    Returns the archived review directory path.
+    """
+    review_dir = reviews_dir / slug
+    brief_path = review_dir / "brief.md"
+    if not brief_path.exists():
+        raise ReviewNotFound(f"no review at {review_dir}")
+    brief = load_brief(brief_path)
+    brief.status = BriefStatus.REJECTED
+    write_brief(brief_path, brief)
+    dest = _archive_path(reviews_dir, slug)
+    shutil.move(str(review_dir), str(dest))
+    return dest
