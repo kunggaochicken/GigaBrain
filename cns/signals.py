@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json as _json
 import subprocess
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -14,6 +14,12 @@ from typing import Protocol
 class Signal:
     source: str  # e.g., "vault_dir:Daily" or "git:gigaflow#abc123"
     content: str  # text body to substring-match against bets
+    # Date the signal was produced. Used by the detector to suppress
+    # already-reviewed conflicts (issue #13). For sources without a native
+    # timestamp (e.g., a static memory file), collectors fall back to the
+    # underlying file's mtime. None means "unknown" — detector treats unknown
+    # timestamps as fresh (does not suppress).
+    timestamp: date | None = field(default=None)
 
 
 class SignalSource(Protocol):
@@ -59,7 +65,11 @@ class VaultDirSignal:
                 content = full.read_text(encoding="utf-8")
             except OSError:
                 continue
-            signals.append(Signal(source=f"vault_dir:{self.path}", content=content))
+            try:
+                ts = date.fromtimestamp(full.stat().st_mtime)
+            except OSError:
+                ts = None
+            signals.append(Signal(source=f"vault_dir:{self.path}", content=content, timestamp=ts))
         return signals
 
 
@@ -79,7 +89,7 @@ class GitCommitsSignal:
                         "git",
                         "log",
                         f"--since={window_hours} hours ago",
-                        "--pretty=format:%H%x00%s%x00%b%x1e",
+                        "--pretty=format:%H%x00%cI%x00%s%x00%b%x1e",
                     ],
                     cwd=repo_path,
                     capture_output=True,
@@ -94,15 +104,23 @@ class GitCommitsSignal:
                 if not entry:
                     continue
                 parts = entry.split("\x00")
-                if len(parts) < 2:
+                if len(parts) < 3:
                     continue
                 sha = parts[0][:7]
-                subject = parts[1]
-                body = parts[2] if len(parts) > 2 else ""
+                committed_iso = parts[1]
+                subject = parts[2]
+                body = parts[3] if len(parts) > 3 else ""
+                ts: date | None = None
+                if committed_iso:
+                    try:
+                        ts = datetime.fromisoformat(committed_iso).date()
+                    except ValueError:
+                        ts = None
                 signals.append(
                     Signal(
                         source=f"git:{rel}#{sha}",
                         content=f"{subject}\n\n{body}".strip(),
+                        timestamp=ts,
                     )
                 )
         return signals
@@ -155,6 +173,7 @@ class GitHubPRsSignal:
                     Signal(
                         source=f"github:{repo}#{pr['number']}",
                         content=content,
+                        timestamp=merged_at.date(),
                     )
                 )
         return signals

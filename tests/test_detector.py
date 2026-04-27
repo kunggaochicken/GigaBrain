@@ -69,10 +69,33 @@ def test_kill_criteria_no_overfire_on_single_topic_word():
 
 
 def test_kill_criteria_unspecified_persistently_flags():
-    bets = [(_bet(kill_criteria="unspecified — needs sparring"), "bet_b.md")]
+    # last_reviewed before today: the unspecified flag persists across days.
+    bets = [
+        (
+            _bet(
+                kill_criteria="unspecified — needs sparring",
+                last_reviewed=date(2026, 4, 24),
+            ),
+            "bet_b.md",
+        )
+    ]
     conflicts = detect_conflicts(bets, signals=[], cfg=_config(), today=date(2026, 4, 25))
     assert len(conflicts) == 1
     assert "needs sparring" in conflicts[0].trigger.lower()
+
+
+def test_kill_criteria_unspecified_suppressed_when_just_reviewed():
+    """Issue #13: confirming an 'unspecified — needs sparring' bet via /spar
+    bumps last_reviewed to today; the flag should not re-fire the same day."""
+    today = date(2026, 4, 26)
+    bets = [
+        (
+            _bet(kill_criteria="unspecified — needs sparring", last_reviewed=today),
+            "bet_b.md",
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals=[], cfg=_config(), today=today)
+    assert conflicts == []
 
 
 def test_staleness_flag_by_horizon():
@@ -201,3 +224,156 @@ def test_no_signals_no_kill_no_stale_no_unspecified_yields_no_conflicts():
     bets = [(_bet(kill_criteria="kill if explicit thing"), "bet_clean.md")]
     conflicts = detect_conflicts(bets, signals=[], cfg=_config(), today=date(2026, 4, 25))
     assert conflicts == []
+
+
+def test_signal_older_than_last_reviewed_is_suppressed():
+    """Issue #13: a kill_criteria signal that the user already saw and confirmed
+    (last_reviewed >= today, signal timestamp < last_reviewed) must not re-fire."""
+    today = date(2026, 4, 26)
+    bets = [
+        (
+            _bet(
+                kill_criteria="kill if scipy dependency missing",
+                last_reviewed=today,
+            ),
+            "bet_a.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="git:r#1",
+            content="fix: scipy dependency removed from requirements",
+            timestamp=date(2026, 4, 25),
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=today)
+    assert conflicts == []
+
+
+def test_signal_newer_than_last_reviewed_still_fires():
+    """Issue #13: suppression must not be too aggressive. A signal newer than
+    last_reviewed represents new information the user has not yet seen."""
+    today = date(2026, 4, 26)
+    bets = [
+        (
+            _bet(
+                kill_criteria="kill if scipy dependency missing",
+                last_reviewed=date(2026, 4, 25),
+            ),
+            "bet_a.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="git:r#1",
+            content="fix: scipy dependency removed from requirements",
+            timestamp=today,
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=today)
+    assert len(conflicts) == 1
+    assert conflicts[0].bet_file == "bet_a.md"
+
+
+def test_signal_contradiction_suppressed_when_already_reviewed():
+    """Issue #13: signal-vs-bet contradictions also respect last_reviewed."""
+    today = date(2026, 4, 26)
+    bets = [
+        (
+            _bet(
+                name="Tensorflow focus",
+                body_the_bet="we focus on tensorflow models for production",
+                last_reviewed=today,
+            ),
+            "bet_tf.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="commit:abc",
+            content="migrating away from tensorflow production models instead of using pytorch",
+            timestamp=date(2026, 4, 25),
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=today)
+    assert [c for c in conflicts if "contradict" in c.trigger.lower()] == []
+
+
+def test_vault_dir_signal_uses_file_mtime_as_timestamp(tmp_path):
+    """Issue #13: signals from static memory files must derive their timestamp
+    from the underlying file's mtime so suppression can compare against
+    last_reviewed."""
+    import os
+    import subprocess
+
+    from cns.signals import VaultDirSignal
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@e.com"], cwd=tmp_path, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"], cwd=tmp_path, check=True, capture_output=True
+    )
+    (tmp_path / "Daily").mkdir()
+    f = tmp_path / "Daily" / "note.md"
+    f.write_text("scipy reference here")
+    subprocess.run(["git", "add", "Daily/"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "add"], cwd=tmp_path, check=True, capture_output=True)
+
+    # Force the file mtime to a known prior date.
+    from datetime import datetime as _dt
+    from datetime import time as _time
+
+    target_ts = date(2026, 4, 20)
+    epoch = int(_dt.combine(target_ts, _time()).timestamp())
+    os.utime(f, (epoch, epoch))
+
+    signals = VaultDirSignal(path="Daily").collect(vault_root=tmp_path, window_hours=24 * 365)
+    assert len(signals) == 1
+    assert signals[0].timestamp == target_ts
+
+
+def test_vault_dir_signal_mtime_drives_suppression(tmp_path):
+    """Issue #13 end-to-end: a VaultDirSignal whose underlying file is older
+    than last_reviewed gets suppressed; a newer file does not."""
+    import os
+    import subprocess
+
+    from cns.signals import VaultDirSignal
+
+    today = date(2026, 4, 26)
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@e.com"], cwd=tmp_path, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"], cwd=tmp_path, check=True, capture_output=True
+    )
+    (tmp_path / "Daily").mkdir()
+    f = tmp_path / "Daily" / "memory.md"
+    f.write_text("we are migrating away from tensorflow production models instead of pytorch")
+    subprocess.run(["git", "add", "Daily/"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "add"], cwd=tmp_path, check=True, capture_output=True)
+
+    from datetime import datetime as _dt
+    from datetime import time as _time
+
+    older = date(2026, 4, 20)
+    epoch = int(_dt.combine(older, _time()).timestamp())
+    os.utime(f, (epoch, epoch))
+
+    signals = VaultDirSignal(path="Daily").collect(vault_root=tmp_path, window_hours=24 * 365)
+    bets = [
+        (
+            _bet(
+                name="Tensorflow focus",
+                body_the_bet="we focus on tensorflow models for production",
+                last_reviewed=today,
+            ),
+            "bet_tf.md",
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=today)
+    assert [c for c in conflicts if "contradict" in c.trigger.lower()] == []

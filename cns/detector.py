@@ -59,7 +59,20 @@ def detect_conflicts(
         if bet.deferred_until and bet.deferred_until > today:
             continue
 
-        if bet.kill_criteria.strip().lower() == UNSPECIFIED_KILL:
+        # Issue #13: if the bet was reviewed today or later, suppress signal-
+        # driven and "unspecified" conflicts whose underlying signal/state the
+        # user has already seen. Signals with timestamps strictly older than
+        # last_reviewed are treated as already-confirmed.
+        already_reviewed = bet.last_reviewed >= today
+        visible_signals = [
+            s
+            for s in signals
+            if not (
+                already_reviewed and s.timestamp is not None and s.timestamp < bet.last_reviewed
+            )
+        ]
+
+        if bet.kill_criteria.strip().lower() == UNSPECIFIED_KILL and not already_reviewed:
             out.append(
                 _make(
                     slug=_slug_from_filename(path) + "-needs-sparring",
@@ -73,7 +86,7 @@ def detect_conflicts(
 
         kill_text = bet.kill_criteria.lower()
         if kill_text != UNSPECIFIED_KILL:
-            for sig in signals:
+            for sig in visible_signals:
                 if _phrase_match(kill_text, sig.content.lower()):
                     out.append(
                         _make(
@@ -89,7 +102,7 @@ def detect_conflicts(
 
         bet_body_lower = (bet.body_the_bet or "").lower()
         if bet_body_lower:
-            for sig in signals:
+            for sig in visible_signals:
                 if _signal_contradicts_bet(bet_body_lower, sig.content.lower()):
                     out.append(
                         _make(
