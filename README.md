@@ -97,6 +97,8 @@ Full walkthrough: [docs/getting-started.md](docs/getting-started.md)
 
 v0.1 — early. Schema is versioned; breaking changes will ship migration scripts.
 
+- Hook executor not shipped in v0.2 — agent path scoping is prompt-enforced. See [#20](https://github.com/kunggaochicken/GigaBrain/issues/20).
+
 ## Daily loop
 
 ```text
