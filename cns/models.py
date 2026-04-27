@@ -65,10 +65,10 @@ class ToolPolicy(BaseModel):
 class RoleSpec(BaseModel):
     id: str
     name: str
-    reports_to: Optional[str] = None
+    reports_to: str | None = None
     workspaces: list[Workspace] = Field(default_factory=list)
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
-    persona: Optional[str] = None
+    persona: str | None = None
 
 
 class SignalSource(BaseModel):
@@ -110,7 +110,7 @@ class Config(BaseModel):
     signal_sources: list[SignalSource]
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
-    execution: Optional[ExecutionConfig] = None
+    execution: ExecutionConfig | None = None
 
     @model_validator(mode="after")
     def _unique_role_ids(self):

@@ -3,7 +3,16 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from cns.models import Bet, BetStatus, Config, Conflict, RoleSpec
+from cns.models import (
+    Bet,
+    BetStatus,
+    Config,
+    Conflict,
+    ExecutionConfig,
+    RoleSpec,
+    ToolPolicy,
+    Workspace,
+)
 
 
 def test_bet_minimal_valid():
@@ -103,27 +112,23 @@ def test_conflict_id_format():
 
 
 def test_workspace_model():
-    from cns.models import Workspace
     w = Workspace(path="~/code/myapp", mode="read-write")
     assert w.path == "~/code/myapp"
     assert w.mode == "read-write"
 
 
 def test_workspace_mode_must_be_valid():
-    from cns.models import Workspace
     with pytest.raises(ValidationError):
         Workspace(path="~/x", mode="rw")  # not in literal
 
 
 def test_tool_policy_defaults():
-    from cns.models import ToolPolicy
     t = ToolPolicy()
     assert t.bash_allowlist == []
     assert t.web is False
 
 
 def test_role_spec_extended_fields_default_safely():
-    from cns.models import RoleSpec, ToolPolicy
     r = RoleSpec(id="ceo", name="CEO")
     assert r.reports_to is None
     assert r.workspaces == []
@@ -132,7 +137,6 @@ def test_role_spec_extended_fields_default_safely():
 
 
 def test_role_spec_with_full_extended_fields():
-    from cns.models import RoleSpec, Workspace, ToolPolicy
     r = RoleSpec(
         id="cto",
         name="CTO",
@@ -147,7 +151,6 @@ def test_role_spec_with_full_extended_fields():
 
 
 def test_execution_config_defaults():
-    from cns.models import ExecutionConfig
     ec = ExecutionConfig(top_level_leader="ceo")
     assert ec.reviews_dir == "Brain/Reviews"
     assert ec.default_filter == "pending"
@@ -155,13 +158,11 @@ def test_execution_config_defaults():
 
 
 def test_execution_config_top_level_leader_required():
-    from cns.models import ExecutionConfig
     with pytest.raises(ValidationError):
         ExecutionConfig()  # top_level_leader has no default
 
 
 def test_config_accepts_optional_execution_block():
-    from cns.models import Config, RoleSpec, ExecutionConfig
     cfg = Config(
         brain={"root": "Brain", "bets_dir": "Brain/Bets",
                "bets_index": "Brain/Bets/BETS.md",
@@ -176,7 +177,6 @@ def test_config_accepts_optional_execution_block():
 
 
 def test_config_execution_optional_when_absent():
-    from cns.models import Config, RoleSpec
     cfg = Config(
         brain={"root": "Brain", "bets_dir": "Brain/Bets",
                "bets_index": "Brain/Bets/BETS.md",
