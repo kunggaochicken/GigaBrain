@@ -312,3 +312,48 @@ def test_build_envelope_includes_related_bets_snapshot(tmp_path):
     assert "contradicts" in snap
     assert "same_topic_active" in snap
     assert "same_topic_historical" in snap
+
+
+def test_related_snapshot_classifies_by_status(tmp_path):
+    """A killed bet that shares vocabulary with the target lands in
+    same_topic_historical; an active one lands in same_topic_active."""
+    cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    # All three share the word "marketing" (>= 5 chars) so the heuristic matches.
+    bets_dir.mkdir(parents=True, exist_ok=True)
+    (bets_dir / "bet_target.md").write_text(
+        "---\n"
+        "name: target marketing push\ndescription: x\nstatus: active\nowner: cmo\n"
+        "horizon: this-week\nconfidence: low\nsupersedes: null\n"
+        "created: 2026-04-01\nlast_reviewed: 2026-04-01\n"
+        "kill_criteria: x\ndeferred_until: null\n---\n\n## The bet\nbody\n"
+    )
+    (bets_dir / "bet_active_sibling.md").write_text(
+        "---\n"
+        "name: sibling marketing thing\ndescription: x\nstatus: active\nowner: cmo\n"
+        "horizon: this-week\nconfidence: low\nsupersedes: null\n"
+        "created: 2026-04-01\nlast_reviewed: 2026-04-01\n"
+        "kill_criteria: x\ndeferred_until: null\n---\n\n## The bet\nbody\n"
+    )
+    (bets_dir / "bet_dead_sibling.md").write_text(
+        "---\n"
+        "name: dead marketing thing\ndescription: x\nstatus: killed\nowner: cmo\n"
+        "horizon: this-week\nconfidence: low\nsupersedes: null\n"
+        "created: 2026-04-01\nlast_reviewed: 2026-04-01\n"
+        "kill_criteria: x\ndeferred_until: null\n---\n\n## The bet\nbody\n"
+    )
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter="target",
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(item=item, vault_root=tmp_path, cfg=cfg)
+    snap = env["related_bets_snapshot"]
+    assert "bet_active_sibling.md" in snap["same_topic_active"]
+    assert "bet_dead_sibling.md" in snap["same_topic_historical"]
+    # The killed bet must NOT appear in active and vice versa.
+    assert "bet_dead_sibling.md" not in snap["same_topic_active"]
+    assert "bet_active_sibling.md" not in snap["same_topic_historical"]

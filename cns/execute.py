@@ -208,6 +208,8 @@ def _compute_related_bets_snapshot(
     name or description is "same topic"; "contradicts" is filled by /spar's
     re-detection at review time.
     """
+    # TODO(v2): tokenize on `_` and `-`, strip stopwords. Today this only matches
+    # bets that share an identical multi-word phrase post-glue.
     needle = (bet.name + " " + bet.description).lower()
     needle_words = {w for w in needle.split() if len(w) >= 5}
 
@@ -244,6 +246,9 @@ def build_agent_envelope(
     """
     if not item.dispatch or item.role is None:
         raise ValueError(f"item is not dispatchable: {item.skip_reason}")
+
+    if cfg.execution is None:
+        raise NoExecutionConfigError("no execution config — run `cns execute init` first")
 
     review_dir = vault_root / cfg.execution.reviews_dir / item.bet_slug
     review_dir.mkdir(parents=True, exist_ok=True)
