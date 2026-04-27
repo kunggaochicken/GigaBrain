@@ -103,7 +103,7 @@ class ExecutionConfig(BaseModel):
 
 
 class Config(BaseModel):
-    schema_version: int = 1   # 1 = legacy, 2 = execution-aware
+    schema_version: int = 1  # 1 = legacy, 2 = execution-aware
     brain: BrainPaths
     roles: list[RoleSpec]
     horizons: dict[str, int]
@@ -118,16 +118,14 @@ class Config(BaseModel):
         # execution block is present. The latter implies the user has opted
         # into the new schema and silently-flat configs would let an
         # ill-defined "root" sneak through _execution_top_level_leader_is_root.
-        opted_in = (
-            any(r.reports_to is not None for r in self.roles)
-            or self.execution is not None
-        )
+        opted_in = any(r.reports_to is not None for r in self.roles) or self.execution is not None
         if not opted_in:
             # All flat, no execution block: skip. Keeps legacy sample vaults working.
             return self
         # Deferred import: cns.roles imports RoleSpec from this module;
         # a top-level import would be a cycle.
         from cns.roles import validate_role_tree
+
         validate_role_tree(self.roles)
         return self
 
@@ -138,6 +136,7 @@ class Config(BaseModel):
         # Deferred import: cns.roles imports RoleSpec from this module;
         # a top-level import would be a cycle.
         from cns.roles import find_root_role
+
         root = find_root_role(self.roles)
         if self.execution.top_level_leader != root.id:
             raise ValueError(

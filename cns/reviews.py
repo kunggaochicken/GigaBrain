@@ -12,18 +12,20 @@ Provides:
 """
 
 from __future__ import annotations
-from enum import Enum
-from pathlib import Path
-from typing import Literal, Optional
+
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from enum import StrEnum
+from pathlib import Path
+from typing import Literal
+
 import frontmatter
 import yaml
 from pydantic import BaseModel, Field
 
 
-class BriefStatus(str, Enum):
+class BriefStatus(StrEnum):
     PENDING = "pending"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
@@ -33,7 +35,7 @@ FileAction = Literal["created", "modified", "deleted"]
 
 
 class FileTouched(BaseModel):
-    path: str             # ORIGINAL workspace path (e.g. ~/code/myapp/foo.py)
+    path: str  # ORIGINAL workspace path (e.g. ~/code/myapp/foo.py)
     action: FileAction
     bytes: int = 0
 
@@ -54,27 +56,26 @@ class Brief(BaseModel):
 
     Body sections live in `body_*` fields and are serialized in canonical order.
     """
+
     # Frontmatter
-    bet: str                                  # e.g. "bet_ship_v1_blog.md"
+    bet: str  # e.g. "bet_ship_v1_blog.md"
     owner: str
-    agent_run_id: str                         # ISO-ish timestamp, used for sort
+    agent_run_id: str  # ISO-ish timestamp, used for sort
     status: BriefStatus
     proposed_closure: bool = False
-    related_bets_at_write: RelatedBetsSnapshot = Field(
-        default_factory=RelatedBetsSnapshot
-    )
+    related_bets_at_write: RelatedBetsSnapshot = Field(default_factory=RelatedBetsSnapshot)
     files_touched: list[FileTouched] = Field(default_factory=list)
     verification: list[VerificationResult] = Field(default_factory=list)
 
     # Body sections (parsed from H2 markdown headers)
-    body_tldr: Optional[str] = None
-    body_what_i_did: Optional[str] = None
-    body_why_satisfies: Optional[str] = None
-    body_decisions_needed: Optional[str] = None
-    body_blocks: Optional[str] = None
-    body_proposed_next_state: Optional[str] = None
-    body_receipts: Optional[str] = None
-    body_reviewer_notes: Optional[str] = None  # appended on edit-and-rerun
+    body_tldr: str | None = None
+    body_what_i_did: str | None = None
+    body_why_satisfies: str | None = None
+    body_decisions_needed: str | None = None
+    body_blocks: str | None = None
+    body_proposed_next_state: str | None = None
+    body_receipts: str | None = None
+    body_reviewer_notes: str | None = None  # appended on edit-and-rerun
 
 
 # (header text in markdown, body field name) — preserves canonical write order
@@ -116,8 +117,7 @@ def load_brief(path: Path) -> Brief:
 def write_brief(path: Path, brief: Brief) -> None:
     """Serialize a Brief to disk: frontmatter + sectioned markdown."""
     fm_fields = {
-        k: v for k, v in brief.model_dump(mode="json").items()
-        if not k.startswith("body_")
+        k: v for k, v in brief.model_dump(mode="json").items() if not k.startswith("body_")
     }
     body_parts: list[str] = []
     for header, field in _BRIEF_SECTIONS:
@@ -131,8 +131,12 @@ def write_brief(path: Path, brief: Brief) -> None:
     path.write_text(f"---\n{fm_yaml}\n---\n\n{body}", encoding="utf-8")
 
 
-class ReviewNotFound(FileNotFoundError):
+class ReviewNotFoundError(FileNotFoundError):
     pass
+
+
+# Backwards-compat alias for the original (un-suffixed) name.
+ReviewNotFound = ReviewNotFoundError
 
 
 def staged_path_for(workspace_path: str, review_dir: Path) -> Path:
@@ -195,7 +199,7 @@ def list_pending_reviews(reviews_dir: Path) -> list[tuple[str, Brief]]:
 
 
 def _archive_path(reviews_dir: Path, slug: str) -> Path:
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
     archive_root = reviews_dir / ".archive"
     archive_root.mkdir(parents=True, exist_ok=True)
     return archive_root / f"{ts}_{slug}"
@@ -205,7 +209,7 @@ def accept_review(
     reviews_dir: Path,
     slug: str,
     *,
-    vault_root: Optional[Path] = None,
+    vault_root: Path | None = None,
 ) -> Path:
     """Promote staged files into workspaces, mark brief accepted, archive the review.
 

@@ -164,12 +164,14 @@ def test_execution_config_top_level_leader_required():
 
 def test_config_accepts_optional_execution_block():
     cfg = Config(
-        brain={"root": "Brain", "bets_dir": "Brain/Bets",
-               "bets_index": "Brain/Bets/BETS.md",
-               "conflicts_file": "Brain/CONFLICTS.md"},
+        brain={
+            "root": "Brain",
+            "bets_dir": "Brain/Bets",
+            "bets_index": "Brain/Bets/BETS.md",
+            "conflicts_file": "Brain/CONFLICTS.md",
+        },
         roles=[RoleSpec(id="ceo", name="CEO")],
-        horizons={"this-week": 7, "this-month": 30,
-                  "this-quarter": 90, "strategic": 180},
+        horizons={"this-week": 7, "this-month": 30, "this-quarter": 90, "strategic": 180},
         signal_sources=[],
         execution=ExecutionConfig(top_level_leader="ceo"),
     )
@@ -178,12 +180,14 @@ def test_config_accepts_optional_execution_block():
 
 def test_config_execution_optional_when_absent():
     cfg = Config(
-        brain={"root": "Brain", "bets_dir": "Brain/Bets",
-               "bets_index": "Brain/Bets/BETS.md",
-               "conflicts_file": "Brain/CONFLICTS.md"},
+        brain={
+            "root": "Brain",
+            "bets_dir": "Brain/Bets",
+            "bets_index": "Brain/Bets/BETS.md",
+            "conflicts_file": "Brain/CONFLICTS.md",
+        },
         roles=[RoleSpec(id="ceo", name="CEO")],
-        horizons={"this-week": 7, "this-month": 30,
-                  "this-quarter": 90, "strategic": 180},
+        horizons={"this-week": 7, "this-month": 30, "this-quarter": 90, "strategic": 180},
         signal_sources=[],
     )
     assert cfg.execution is None
@@ -192,30 +196,35 @@ def test_config_execution_optional_when_absent():
 def test_config_role_tree_validated_when_reports_to_used():
     with pytest.raises(ValidationError):
         Config(
-            brain={"root": "Brain", "bets_dir": "Brain/Bets",
-                   "bets_index": "Brain/Bets/BETS.md",
-                   "conflicts_file": "Brain/CONFLICTS.md"},
+            brain={
+                "root": "Brain",
+                "bets_dir": "Brain/Bets",
+                "bets_index": "Brain/Bets/BETS.md",
+                "conflicts_file": "Brain/CONFLICTS.md",
+            },
             roles=[
                 RoleSpec(id="ceo", name="CEO"),
                 RoleSpec(id="cto", name="CTO", reports_to="cfo"),  # dangling
             ],
-            horizons={"this-week": 7, "this-month": 30,
-                      "this-quarter": 90, "strategic": 180},
+            horizons={"this-week": 7, "this-month": 30, "this-quarter": 90, "strategic": 180},
             signal_sources=[],
         )
+
 
 def test_config_execution_leader_must_match_root():
     with pytest.raises(ValidationError, match="must match the root"):
         Config(
-            brain={"root": "Brain", "bets_dir": "Brain/Bets",
-                   "bets_index": "Brain/Bets/BETS.md",
-                   "conflicts_file": "Brain/CONFLICTS.md"},
+            brain={
+                "root": "Brain",
+                "bets_dir": "Brain/Bets",
+                "bets_index": "Brain/Bets/BETS.md",
+                "conflicts_file": "Brain/CONFLICTS.md",
+            },
             roles=[
                 RoleSpec(id="ceo", name="CEO"),
                 RoleSpec(id="cto", name="CTO", reports_to="ceo"),
             ],
-            horizons={"this-week": 7, "this-month": 30,
-                      "this-quarter": 90, "strategic": 180},
+            horizons={"this-week": 7, "this-month": 30, "this-quarter": 90, "strategic": 180},
             signal_sources=[],
             execution=ExecutionConfig(top_level_leader="cto"),  # wrong
         )
@@ -228,15 +237,17 @@ def test_config_execution_with_flat_roles_forces_tree_validation():
     ambiguous and should fail."""
     with pytest.raises(ValidationError, match="multiple roots"):
         Config(
-            brain={"root": "Brain", "bets_dir": "Brain/Bets",
-                   "bets_index": "Brain/Bets/BETS.md",
-                   "conflicts_file": "Brain/CONFLICTS.md"},
+            brain={
+                "root": "Brain",
+                "bets_dir": "Brain/Bets",
+                "bets_index": "Brain/Bets/BETS.md",
+                "conflicts_file": "Brain/CONFLICTS.md",
+            },
             roles=[
                 RoleSpec(id="cto", name="CTO"),  # no reports_to
                 RoleSpec(id="ceo", name="CEO"),  # no reports_to
             ],
-            horizons={"this-week": 7, "this-month": 30,
-                      "this-quarter": 90, "strategic": 180},
+            horizons={"this-week": 7, "this-month": 30, "this-quarter": 90, "strategic": 180},
             signal_sources=[],
             execution=ExecutionConfig(top_level_leader="ceo"),
         )

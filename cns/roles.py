@@ -5,7 +5,9 @@ The role tree is encoded by `RoleSpec.reports_to`. v1 uses one level
 """
 
 from __future__ import annotations
+
 from pathlib import Path
+
 from cns.models import RoleSpec
 
 
@@ -26,9 +28,7 @@ def validate_role_tree(roles: list[RoleSpec]) -> None:
     # Dangling references
     for r in roles:
         if r.reports_to is not None and r.reports_to not in ids:
-            raise RoleTreeError(
-                f"role '{r.id}' has dangling reports_to '{r.reports_to}'"
-            )
+            raise RoleTreeError(f"role '{r.id}' has dangling reports_to '{r.reports_to}'")
 
     # Self-loops: a role that directly reports to itself (caught before root
     # check so the message says "cycle" rather than "no root").

@@ -1,21 +1,24 @@
 """Brief schema, serialization, and queue operations (list_pending, accept, reject)."""
 
 from pathlib import Path
+
 import pytest
+from pydantic import ValidationError
+
 from cns.reviews import (
     Brief,
     BriefStatus,
     FileTouched,
-    VerificationResult,
     RelatedBetsSnapshot,
-    write_brief,
+    ReviewNotFound,
+    VerificationResult,
+    accept_review,
+    list_pending_reviews,
     load_brief,
+    reject_review,
     staged_path_for,
     workspace_path_from_staged,
-    list_pending_reviews,
-    accept_review,
-    reject_review,
-    ReviewNotFound,
+    write_brief,
 )
 
 
@@ -63,7 +66,7 @@ def test_brief_round_trip(tmp_path):
 
 
 def test_brief_required_fields():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Brief(  # missing bet, owner, etc.
             agent_run_id="2026-04-26T00-00-00Z",
             status=BriefStatus.PENDING,
@@ -78,7 +81,7 @@ def test_brief_status_transitions_allowed():
 def test_brief_load_rejects_malformed_frontmatter(tmp_path):
     path = tmp_path / "bad.md"
     path.write_text("---\nbet: bet_x.md\n---\n\n## TL;DR\nbody\n")  # missing required
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         load_brief(path)
 
 
@@ -134,9 +137,11 @@ def test_workspace_path_from_staged_round_trip(tmp_path, monkeypatch):
 
 def test_list_pending_reviews_returns_pending_only(tmp_path):
     reviews_dir = tmp_path / "Brain/Reviews"
-    for slug, status in [("a", BriefStatus.PENDING),
-                          ("b", BriefStatus.ACCEPTED),
-                          ("c", BriefStatus.PENDING)]:
+    for slug, status in [
+        ("a", BriefStatus.PENDING),
+        ("b", BriefStatus.ACCEPTED),
+        ("c", BriefStatus.PENDING),
+    ]:
         b = _sample_brief()
         b.status = status
         write_brief(reviews_dir / slug / "brief.md", b)
@@ -162,9 +167,7 @@ def test_accept_promotes_files_and_archives(tmp_path, monkeypatch):
     review_dir = reviews_dir / "ship_v1_blog"
     # Write the brief listing this file
     b = _sample_brief()
-    b.files_touched = [FileTouched(
-        path="~/code/myapp/foo.py", action="created", bytes=12
-    )]
+    b.files_touched = [FileTouched(path="~/code/myapp/foo.py", action="created", bytes=12)]
     write_brief(review_dir / "brief.md", b)
     # IMPORTANT: monkeypatched HOME is `<tmp_path>/home` which expands to e.g.
     # `/private/var/folders/.../tmp_path/home`. The staging path computed by
@@ -220,9 +223,13 @@ def test_accept_promotes_vault_relative_file(tmp_path):
     real_staged.parent.mkdir(parents=True, exist_ok=True)
     real_staged.write_text("draft\n")
     b = _sample_brief()
-    b.files_touched = [FileTouched(
-        path="Brain/Marketing/post.md", action="created", bytes=6,
-    )]
+    b.files_touched = [
+        FileTouched(
+            path="Brain/Marketing/post.md",
+            action="created",
+            bytes=6,
+        )
+    ]
     write_brief(review_dir / "brief.md", b)
     accept_review(reviews_dir, "x", vault_root=vault)
     promoted = vault / "Brain/Marketing/post.md"

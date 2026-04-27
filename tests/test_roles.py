@@ -1,20 +1,21 @@
 """Role tree validation and workspace path resolution."""
 
-import pytest
 from pathlib import Path
-from cns.models import RoleSpec, Workspace
+
+import pytest
+
+from cns.models import RoleSpec
 from cns.roles import (
-    validate_role_tree,
-    resolve_workspace_path,
+    RoleTreeError,
     find_root_role,
     get_subordinates,
-    RoleTreeError,
+    resolve_workspace_path,
+    validate_role_tree,
 )
 
 
 def _r(id_, reports_to=None, workspaces=None):
-    return RoleSpec(id=id_, name=id_.upper(), reports_to=reports_to,
-                    workspaces=workspaces or [])
+    return RoleSpec(id=id_, name=id_.upper(), reports_to=reports_to, workspaces=workspaces or [])
 
 
 def test_validate_single_root_succeeds():
