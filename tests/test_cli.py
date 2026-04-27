@@ -1,5 +1,8 @@
+from datetime import date
+
 from click.testing import CliRunner
 
+from cns.bet import create_bet
 from cns.cli import cli
 from cns.reviews import Brief, BriefStatus, FileTouched, staged_path_for, write_brief
 
@@ -207,3 +210,96 @@ def test_roles_list_prints_tree(sample_vault):
     lines = result.output.splitlines()
     cto_idx = next(i for i, line in enumerate(lines) if "CTO" in line)
     assert lines[cto_idx].startswith(" ") or lines[cto_idx].startswith("\t")
+
+
+def test_end_to_end_create_init_dispatch_accept(tmp_path, monkeypatch):
+    """Full loop: bootstrap a vault, init execution, write a CTO-owned bet,
+    plan a dispatch, simulate a brief landing, accept it."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home/code/myapp").mkdir(parents=True)
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    r = runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        "schema_version: 2\n"
+        "brain:\n  root: Brain\n  bets_dir: Brain/Bets\n"
+        "  bets_index: Brain/Bets/BETS.md\n  conflicts_file: Brain/CONFLICTS.md\n"
+        "roles:\n"
+        "  - id: ceo\n    name: CEO\n    reports_to: null\n"
+        "  - id: cto\n    name: CTO\n    reports_to: ceo\n"
+        "    workspaces:\n      - path: ~/code/myapp\n        mode: read-write\n"
+        "    tools:\n      bash_allowlist: [pytest]\n      web: false\n"
+        "    persona: |\n      You are the CTO.\n"
+        "horizons:\n  this-week: 7\n  this-month: 30\n"
+        "  this-quarter: 90\n  strategic: 180\n"
+        "signal_sources: []\n"
+        "execution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n"
+    )
+
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Refactor auth module",
+        description="Move JWT logic out of the request handler.",
+        owner="cto",
+        horizon="this-week",
+        confidence="medium",
+        kill_criteria="A simpler approach surfaces in code review.",
+        body_the_bet="Extract jwt_handler.py from request_handler.py.",
+        today=date(2026, 4, 26),
+    )
+
+    # Plan dispatch (dry-run)
+    r = runner.invoke(cli, ["execute", "--vault", str(vault), "--dry-run"])
+    assert r.exit_code == 0, r.output
+    assert "DISPATCH" in r.output
+    assert "refactor_auth_module" in r.output
+
+    # Real run writes the hook config
+    r = runner.invoke(cli, ["execute", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+    assert (vault / ".cns/.agent-hooks/refactor_auth_module.json").exists()
+    assert (vault / "Brain/Reviews/refactor_auth_module").is_dir()
+
+    # Simulate the agent producing a brief and a staged file.
+    review_dir = vault / "Brain/Reviews/refactor_auth_module"
+    staged = staged_path_for("~/code/myapp/jwt_handler.py", review_dir=review_dir)
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_text("# jwt_handler\n")
+    write_brief(
+        review_dir / "brief.md",
+        Brief(
+            bet="bet_refactor_auth_module.md",
+            owner="cto",
+            agent_run_id="2026-04-26T15-00-00Z",
+            status=BriefStatus.PENDING,
+            proposed_closure=True,
+            files_touched=[
+                FileTouched(
+                    path="~/code/myapp/jwt_handler.py",
+                    action="created",
+                    bytes=14,
+                )
+            ],
+            body_tldr="Extracted jwt_handler.py.",
+            body_decisions_needed="None — proceed to accept or reject.",
+        ),
+    )
+
+    # Reviews list shows it
+    r = runner.invoke(cli, ["reviews", "list", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+    assert "refactor_auth_module" in r.output
+
+    # Accept promotes the file into the workspace
+    r = runner.invoke(cli, ["reviews", "accept", "refactor_auth_module", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+    promoted = tmp_path / "home/code/myapp/jwt_handler.py"
+    assert promoted.exists(), f"file not promoted; output={r.output}"
+    assert promoted.read_text() == "# jwt_handler\n"
+    assert not review_dir.exists()
+    assert (vault / "Brain/Reviews/.archive").exists()

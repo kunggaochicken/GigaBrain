@@ -76,8 +76,11 @@ cns reindex
 # Run detection:
 cns detect
 
-# Resolve conflicts interactively (in Claude Code):
-/spar
+# Author bets, dispatch agents, review their output (all in Claude Code):
+/bet                       # conversational bet authoring
+/role-setup                # add CTO, CMO, etc. with workspaces and personas
+/execute                   # dispatch role-scoped agents on active bets
+/spar                      # walk conflicts, then review pending agent briefs
 ```
 
 In Obsidian, refresh the file explorer (or just keep working — Obsidian picks up filesystem changes automatically) to see the new `BETS.md` and any `CONFLICTS.md` entries appear.
@@ -93,6 +96,16 @@ Full walkthrough: [docs/getting-started.md](docs/getting-started.md)
 ## Status
 
 v0.1 — early. Schema is versioned; breaking changes will ship migration scripts.
+
+## Daily loop
+
+```
+/bet           author a strategic bet
+/execute       dispatch role-scoped agents (CTO writes code, CMO drafts posts, ...)
+/spar          walk conflicts + pending briefs in one session
+```
+
+Briefs land in `Brain/Reviews/<bet-slug>/brief.md` written at the leader's altitude — no diffs, no implementation noise. Accept promotes staged files into the role's workspaces; reject discards them. See [`docs/superpowers/specs/2026-04-26-execute-and-review-design.md`](docs/superpowers/specs/2026-04-26-execute-and-review-design.md) for the full design.
 
 ## License
 

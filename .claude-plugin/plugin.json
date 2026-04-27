@@ -1,6 +1,6 @@
 {
   "name": "cns",
-  "description": "Central Nervous System: atomized strategic bets with automated conflict detection for markdown vaults. Ships /cns, /cns-bootstrap, /cns-detect, and /spar skills.",
+  "description": "GigaBrain CNS: a delegation console for leaders. Atomized strategic bets, automated conflict detection, role-scoped agent execution, and a unified review queue. Ships /cns, /cns-bootstrap, /cns-detect, /spar, /execute, /bet, and /role-setup skills.",
   "version": "0.1.0",
   "author": {
     "name": "James Gao"
