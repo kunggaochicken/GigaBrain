@@ -15,8 +15,20 @@ from cns.conflicts import (
 )
 from cns.daily_report import append_conflicts_section, inject_tldr_line
 from cns.detector import detect_conflicts
+from cns.execute import (
+    NoExecutionConfigError,
+    build_agent_envelope,
+    build_dispatch_queue,
+)
 from cns.index import render_bets_index
 from cns.models import BetStatus
+from cns.reviews import (
+    ReviewNotFoundError,
+    accept_review,
+    list_pending_reviews,
+    reject_review,
+)
+from cns.roles import find_root_role
 from cns.signals import GitCommitsSignal, GitHubPRsSignal, VaultDirSignal
 
 
@@ -232,3 +244,181 @@ def detect(vault, today):
                 conflicts_file_path=cfg.brain.conflicts_file,
             )
             click.echo(f"Updated daily note {note}")
+
+
+@cli.command()
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+@click.option(
+    "--bet",
+    "bet_filter",
+    default=None,
+    help="Run only this bet slug (without bet_ prefix or .md).",
+)
+@click.option(
+    "--owner",
+    "owner_filter",
+    default=None,
+    help="Run only bets owned by this role id.",
+)
+@click.option(
+    "--all",
+    "include_pending",
+    is_flag=True,
+    default=False,
+    help="Include bets with a pending review (will replace).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print plan; do not write hook configs.",
+)
+@click.argument("init_subcmd", required=False, type=click.Choice(["init"]))
+def execute(vault, bet_filter, owner_filter, include_pending, dry_run, init_subcmd):
+    """Build the dispatch plan for /execute (or run `init` to scaffold config)."""
+    if init_subcmd == "init":
+        _execute_init(vault)
+        return
+
+    root, cfg = _load_vault(vault)
+    try:
+        plan = build_dispatch_queue(
+            vault_root=root,
+            cfg=cfg,
+            bet_filter=bet_filter,
+            owner_filter=owner_filter,
+            include_pending=include_pending,
+        )
+    except NoExecutionConfigError as e:
+        raise click.ClickException(
+            f"{e}. Run `cns execute init` to scaffold execution config."
+        ) from e
+
+    if not plan:
+        click.echo("No active bets matched the filter.")
+        return
+
+    dispatched = [i for i in plan if i.dispatch]
+    skipped = [i for i in plan if not i.dispatch]
+    click.echo(f"Plan: {len(dispatched)} to dispatch, {len(skipped)} skipped.\n")
+    for item in plan:
+        if item.dispatch:
+            click.echo(f"  [DISPATCH] bet_{item.bet_slug}.md  owner={item.owner}")
+        else:
+            click.echo(
+                f"  [SKIP {item.skip_reason.value}] bet_{item.bet_slug}.md  owner={item.owner}"
+            )
+
+    if dry_run:
+        click.echo("\n(dry-run; no hook configs written, no agents dispatched)")
+        return
+
+    click.echo("\nWriting per-bet envelopes:")
+    for item in dispatched:
+        env = build_agent_envelope(item=item, vault_root=root, cfg=cfg)
+        click.echo(f"  -> {env['hook_config_path']}")
+    click.echo(
+        "\nEnvelopes written. The /execute skill (in Claude Code) reads these "
+        "and dispatches agents via the Agent tool."
+    )
+
+
+def _execute_init(vault):
+    """Add an execution{} block to .cns/config.yaml (idempotent)."""
+    root = vault or Path.cwd()
+    cfg_path = root / ".cns/config.yaml"
+    if not cfg_path.exists():
+        raise click.ClickException(f"no config at {cfg_path}")
+    text = cfg_path.read_text(encoding="utf-8")
+    if "\nexecution:" in text or text.startswith("execution:"):
+        click.echo("execution{} block already present.")
+        return
+
+    cfg = load_config(cfg_path)
+    try:
+        root_role = find_root_role(cfg.roles)
+    except Exception:
+        # Flat roles list (no reports_to anywhere): fall back to first role.
+        root_role = cfg.roles[0]
+
+    block = (
+        "\nexecution:\n"
+        "  reviews_dir: Brain/Reviews\n"
+        f"  top_level_leader: {root_role.id}\n"
+        "  default_filter: pending\n"
+        "  artifact_max_files: 50\n"
+    )
+    cfg_path.write_text(text.rstrip() + block, encoding="utf-8")
+    (root / "Brain/Reviews").mkdir(parents=True, exist_ok=True)
+    click.echo(f"Added execution{{}} block; top_level_leader='{root_role.id}'.")
+
+
+@cli.group()
+def reviews():
+    """List, accept, and reject pending /execute reviews."""
+
+
+@reviews.command("list")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+def reviews_list(vault):
+    root, cfg = _load_vault(vault)
+    if cfg.execution is None:
+        raise click.ClickException("no execution config — run `cns execute init` first")
+    pending = list_pending_reviews(root / cfg.execution.reviews_dir)
+    if not pending:
+        click.echo("0 pending reviews.")
+        return
+    click.echo(f"{len(pending)} pending review(s):\n")
+    for slug, brief in pending:
+        marker = " [proposed_closure]" if brief.proposed_closure else ""
+        click.echo(f"  {slug}  bet={brief.bet}  owner={brief.owner}{marker}")
+
+
+@reviews.command("accept")
+@click.argument("slug")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+def reviews_accept(slug, vault):
+    root, cfg = _load_vault(vault)
+    if cfg.execution is None:
+        raise click.ClickException("no execution config")
+    try:
+        archived = accept_review(root / cfg.execution.reviews_dir, slug)
+    except ReviewNotFoundError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"Accepted: archived to {archived}")
+
+
+@reviews.command("reject")
+@click.argument("slug")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+def reviews_reject(slug, vault):
+    root, cfg = _load_vault(vault)
+    if cfg.execution is None:
+        raise click.ClickException("no execution config")
+    try:
+        archived = reject_review(root / cfg.execution.reviews_dir, slug)
+    except ReviewNotFoundError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"Rejected: archived to {archived}")
+
+
+@cli.group()
+def roles():
+    """Inspect role definitions."""
+
+
+@roles.command("list")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+def roles_list(vault):
+    root, cfg = _load_vault(vault)
+    by_parent: dict[str | None, list] = {}
+    for r in cfg.roles:
+        by_parent.setdefault(r.reports_to, []).append(r)
+
+    def _print(role_id: str | None, depth: int):
+        for child in sorted(by_parent.get(role_id, []), key=lambda r: r.id):
+            indent = "  " * depth
+            click.echo(f"{indent}- {child.name} ({child.id})  workspaces={len(child.workspaces)}")
+            _print(child.id, depth + 1)
+
+    _print(None, 0)
