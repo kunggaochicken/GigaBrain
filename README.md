@@ -99,7 +99,7 @@ v0.1 — early. Schema is versioned; breaking changes will ship migration script
 
 ## Daily loop
 
-```
+```text
 /bet           author a strategic bet
 /execute       dispatch role-scoped agents (CTO writes code, CMO drafts posts, ...)
 /spar          walk conflicts + pending briefs in one session

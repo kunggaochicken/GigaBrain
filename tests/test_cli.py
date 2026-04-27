@@ -302,4 +302,8 @@ def test_end_to_end_create_init_dispatch_accept(tmp_path, monkeypatch):
     assert promoted.exists(), f"file not promoted; output={r.output}"
     assert promoted.read_text() == "# jwt_handler\n"
     assert not review_dir.exists()
-    assert (vault / "Brain/Reviews/.archive").exists()
+    archive_dir = vault / "Brain/Reviews/.archive"
+    assert archive_dir.exists()
+    archived = list(archive_dir.iterdir())
+    msg = f"review not archived under {archive_dir}; saw: {archived}"
+    assert any("refactor_auth_module" in p.name for p in archived), msg
