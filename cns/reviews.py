@@ -1,9 +1,12 @@
-"""Review entries: Brief schema, read/write, list_pending, accept, reject.
+"""Review entries: Brief schema and serialization.
 
 A review entry lives at <reviews_dir>/<bet-slug>/ and contains:
 - brief.md       — frontmatter + sectioned markdown (this module's contract)
 - files/         — staged mirror of files the agent touched
 - transcript.md  — full agent transcript (audit-only)
+
+This module defines the `Brief` Pydantic model plus `load_brief` / `write_brief`.
+Queue operations (list_pending, accept, reject) are added in a follow-up task.
 """
 
 from __future__ import annotations

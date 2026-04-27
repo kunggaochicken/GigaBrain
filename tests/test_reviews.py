@@ -1,6 +1,5 @@
-"""Brief schema, read/write, list_pending, accept, reject."""
+"""Brief schema and serialization round-trip."""
 
-from datetime import datetime, timezone
 from pathlib import Path
 import pytest
 from cns.reviews import (
