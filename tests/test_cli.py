@@ -98,6 +98,59 @@ def test_execute_without_init_emits_helpful_error(sample_vault):
     assert "execute init" in result.output
 
 
+def test_execute_init_refuses_multi_root_config(tmp_path):
+    """`cns execute init` against a flat (multi-root) config must refuse before
+    writing — leaving the config file untouched and printing a helpful hint
+    that names the leader and the non-leader roles to fix.
+    """
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    (vault / ".cns").mkdir(parents=True)
+    (vault / "Brain/Bets").mkdir(parents=True)
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_text = (
+        "brain:\n  root: Brain\n  bets_dir: Brain/Bets\n"
+        "  bets_index: Brain/Bets/BETS.md\n  conflicts_file: Brain/CONFLICTS.md\n"
+        "roles:\n"
+        "  - id: ceo\n    name: CEO\n"
+        "  - id: cto\n    name: CTO\n"
+        "  - id: cmo\n    name: CMO\n"
+        "horizons:\n  this-week: 7\n  this-month: 30\n"
+        "  this-quarter: 90\n  strategic: 180\n"
+        "signal_sources: []\n"
+    )
+    cfg_path.write_text(cfg_text)
+    pre_mtime = cfg_path.stat().st_mtime_ns
+
+    result = runner.invoke(cli, ["execute", "init", "--vault", str(vault)])
+
+    assert result.exit_code != 0
+    assert "refusing to write" in result.output
+    assert "multiple roots" in result.output
+    # Helpful hint names the leader and the non-leader roles to fix.
+    assert "reports_to: ceo" in result.output
+    assert "cto" in result.output
+    assert "cmo" in result.output
+    # File must be unchanged byte-for-byte and untouched on disk.
+    assert cfg_path.read_text() == cfg_text
+    assert cfg_path.stat().st_mtime_ns == pre_mtime
+
+
+def test_execute_init_succeeds_on_solo_founder_preset(tmp_path):
+    """`cns bootstrap --preset solo-founder` followed by `cns execute init`
+    must succeed end-to-end (regression for #19: the preset shipped flat,
+    which bricked the config after init wrote `execution:`)."""
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    r = runner.invoke(cli, ["bootstrap", "--vault", str(vault), "--preset", "solo-founder"])
+    assert r.exit_code == 0, r.output
+    r = runner.invoke(cli, ["execute", "init", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+    r = runner.invoke(cli, ["validate", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+
+
 def test_reviews_list_empty(sample_vault):
     """No reviews yet -> reports zero."""
     runner = CliRunner()
