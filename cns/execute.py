@@ -27,8 +27,6 @@ class DispatchSkipReason(StrEnum):
     PENDING_REVIEW = "pending_review"
     NO_WORKSPACES = "no_workspaces"
     UNKNOWN_OWNER = "unknown_owner"
-    OWNER_FILTER = "owner_filter"
-    BET_FILTER = "bet_filter"
 
 
 @dataclass
@@ -99,6 +97,7 @@ def build_dispatch_queue(
 
         slug = _slug_from_bet_filename(path.name)
 
+        # user-requested scope narrowers — drop silently, no plan item
         if bet_filter is not None and slug != bet_filter:
             continue
         if owner_filter is not None and bet.owner != owner_filter:

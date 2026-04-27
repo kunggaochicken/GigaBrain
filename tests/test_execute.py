@@ -188,6 +188,26 @@ def test_build_queue_skips_bet_owned_by_role_without_workspaces(tmp_path):
     assert any(i.skip_reason == DispatchSkipReason.NO_WORKSPACES for i in skipped)
 
 
+def test_build_queue_unknown_owner(tmp_path):
+    """A bet owned by a role id not in cfg.roles is skipped with UNKNOWN_OWNER,
+    not crashed on. Lets a typo'd owner field surface as a clear queue entry
+    rather than blowing up the whole dispatch."""
+    cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "orphan", "cfo")  # cfo is not in _executable_roles()
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    assert len(plan) == 1
+    assert plan[0].dispatch is False
+    assert plan[0].skip_reason == DispatchSkipReason.UNKNOWN_OWNER
+    assert plan[0].role is None
+
+
 def test_build_queue_skips_inactive_bets(tmp_path):
     cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
     bets_dir = tmp_path / "Brain/Bets"
