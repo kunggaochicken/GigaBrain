@@ -148,6 +148,45 @@ def test_reviews_accept_promotes_and_archives(sample_vault, tmp_path, monkeypatc
     assert not review_dir.exists()
 
 
+def test_reviews_accept_uses_vault_root_for_relative_paths(sample_vault, tmp_path):
+    """When reviews_dir is non-default, vault-relative file paths in the brief
+    must still anchor against the vault root, not reviews_dir.parent.parent."""
+    cfg_path = sample_vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + ("\nexecution:\n  reviews_dir: custom/somewhere/Reviews\n  top_level_leader: ceo\n")
+    )
+    review_dir = sample_vault / "custom/somewhere/Reviews/x"
+    real_staged = staged_path_for("Brain/Marketing/post.md", review_dir=review_dir)
+    real_staged.parent.mkdir(parents=True, exist_ok=True)
+    real_staged.write_text("draft\n")
+    write_brief(
+        review_dir / "brief.md",
+        Brief(
+            bet="bet_example.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T00-00-00Z",
+            status=BriefStatus.PENDING,
+            files_touched=[FileTouched(path="Brain/Marketing/post.md", action="created", bytes=6)],
+        ),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "reviews",
+            "accept",
+            "x",
+            "--vault",
+            str(sample_vault),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    promoted = sample_vault / "Brain/Marketing/post.md"
+    assert promoted.exists()
+    assert promoted.read_text() == "draft\n"
+
+
 def test_roles_list_prints_tree(sample_vault):
     cfg_path = sample_vault / ".cns/config.yaml"
     cfg_path.write_text(

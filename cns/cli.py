@@ -1,4 +1,4 @@
-"""CLI entry points: `cns validate`, `cns reindex`, `cns detect`."""
+"""CLI entry points: bootstrap, validate, reindex, detect, execute, reviews, roles."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from cns.reviews import (
     list_pending_reviews,
     reject_review,
 )
-from cns.roles import find_root_role
+from cns.roles import RoleTreeError, find_root_role
 from cns.signals import GitCommitsSignal, GitHubPRsSignal, VaultDirSignal
 
 
@@ -265,7 +265,7 @@ def detect(vault, today):
     "include_pending",
     is_flag=True,
     default=False,
-    help="Include bets with a pending review (will replace).",
+    help="Re-dispatch bets that already have a pending review (replaces the staged dir).",
 )
 @click.option(
     "--dry-run",
@@ -337,8 +337,9 @@ def _execute_init(vault):
     cfg = load_config(cfg_path)
     try:
         root_role = find_root_role(cfg.roles)
-    except Exception:
-        # Flat roles list (no reports_to anywhere): fall back to first role.
+    except RoleTreeError:
+        if not cfg.roles:
+            raise click.ClickException("config has no roles defined") from None
         root_role = cfg.roles[0]
 
     block = (
@@ -380,9 +381,9 @@ def reviews_list(vault):
 def reviews_accept(slug, vault):
     root, cfg = _load_vault(vault)
     if cfg.execution is None:
-        raise click.ClickException("no execution config")
+        raise click.ClickException("no execution config — run `cns execute init` first")
     try:
-        archived = accept_review(root / cfg.execution.reviews_dir, slug)
+        archived = accept_review(root / cfg.execution.reviews_dir, slug, vault_root=root)
     except ReviewNotFoundError as e:
         raise click.ClickException(str(e)) from e
     click.echo(f"Accepted: archived to {archived}")
@@ -394,7 +395,7 @@ def reviews_accept(slug, vault):
 def reviews_reject(slug, vault):
     root, cfg = _load_vault(vault)
     if cfg.execution is None:
-        raise click.ClickException("no execution config")
+        raise click.ClickException("no execution config — run `cns execute init` first")
     try:
         archived = reject_review(root / cfg.execution.reviews_dir, slug)
     except ReviewNotFoundError as e:
