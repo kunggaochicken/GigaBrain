@@ -40,7 +40,6 @@ def test_load_config_raises_on_missing_required_field(tmp_path):
 
 
 def test_config_accepts_schema_version_field(tmp_path):
-    from cns.config import load_config
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
         "schema_version: 2\n"
@@ -56,6 +55,5 @@ def test_config_accepts_schema_version_field(tmp_path):
 
 
 def test_config_defaults_schema_version_to_1_when_absent(sample_vault):
-    from cns.config import load_config
     cfg = load_config(sample_vault / ".cns/config.yaml")
     assert cfg.schema_version == 1
