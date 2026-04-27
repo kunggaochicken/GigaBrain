@@ -17,6 +17,7 @@ class BetStatus(StrEnum):
 
 
 Confidence = Literal["low", "medium", "high"]
+WorkspaceMode = Literal["read-only", "read-write"]
 
 
 class Bet(BaseModel):
@@ -51,9 +52,23 @@ class BrainPaths(BaseModel):
     archive_dir: str | None = None
 
 
+class Workspace(BaseModel):
+    path: str
+    mode: WorkspaceMode
+
+
+class ToolPolicy(BaseModel):
+    bash_allowlist: list[str] = Field(default_factory=list)
+    web: bool = False
+
+
 class RoleSpec(BaseModel):
     id: str
     name: str
+    reports_to: Optional[str] = None
+    workspaces: list[Workspace] = Field(default_factory=list)
+    tools: ToolPolicy = Field(default_factory=ToolPolicy)
+    persona: Optional[str] = None
 
 
 class SignalSource(BaseModel):
@@ -80,6 +95,13 @@ class AutomationConfig(BaseModel):
     daily_report: DailyReportConfig = Field(default_factory=DailyReportConfig)
 
 
+class ExecutionConfig(BaseModel):
+    reviews_dir: str = "Brain/Reviews"
+    top_level_leader: str
+    default_filter: Literal["pending", "all"] = "pending"
+    artifact_max_files: int = 50
+
+
 class Config(BaseModel):
     schema_version: int = 1   # 1 = legacy, 2 = execution-aware
     brain: BrainPaths
@@ -88,6 +110,7 @@ class Config(BaseModel):
     signal_sources: list[SignalSource]
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
+    execution: Optional[ExecutionConfig] = None
 
     @model_validator(mode="after")
     def _unique_role_ids(self):

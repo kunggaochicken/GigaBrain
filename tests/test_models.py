@@ -100,3 +100,90 @@ def test_conflict_id_format():
     )
     assert c.days_open(today=date(2026, 4, 25)) == 0
     assert c.days_open(today=date(2026, 4, 28)) == 3
+
+
+def test_workspace_model():
+    from cns.models import Workspace
+    w = Workspace(path="~/code/myapp", mode="read-write")
+    assert w.path == "~/code/myapp"
+    assert w.mode == "read-write"
+
+
+def test_workspace_mode_must_be_valid():
+    from cns.models import Workspace
+    with pytest.raises(ValidationError):
+        Workspace(path="~/x", mode="rw")  # not in literal
+
+
+def test_tool_policy_defaults():
+    from cns.models import ToolPolicy
+    t = ToolPolicy()
+    assert t.bash_allowlist == []
+    assert t.web is False
+
+
+def test_role_spec_extended_fields_default_safely():
+    from cns.models import RoleSpec, ToolPolicy
+    r = RoleSpec(id="ceo", name="CEO")
+    assert r.reports_to is None
+    assert r.workspaces == []
+    assert isinstance(r.tools, ToolPolicy)
+    assert r.persona is None
+
+
+def test_role_spec_with_full_extended_fields():
+    from cns.models import RoleSpec, Workspace, ToolPolicy
+    r = RoleSpec(
+        id="cto",
+        name="CTO",
+        reports_to="ceo",
+        workspaces=[Workspace(path="~/code/myapp", mode="read-write")],
+        tools=ToolPolicy(bash_allowlist=["pytest"], web=False),
+        persona="You are the CTO.",
+    )
+    assert r.reports_to == "ceo"
+    assert len(r.workspaces) == 1
+    assert "pytest" in r.tools.bash_allowlist
+
+
+def test_execution_config_defaults():
+    from cns.models import ExecutionConfig
+    ec = ExecutionConfig(top_level_leader="ceo")
+    assert ec.reviews_dir == "Brain/Reviews"
+    assert ec.default_filter == "pending"
+    assert ec.artifact_max_files == 50
+
+
+def test_execution_config_top_level_leader_required():
+    from cns.models import ExecutionConfig
+    with pytest.raises(ValidationError):
+        ExecutionConfig()  # top_level_leader has no default
+
+
+def test_config_accepts_optional_execution_block():
+    from cns.models import Config, RoleSpec, ExecutionConfig
+    cfg = Config(
+        brain={"root": "Brain", "bets_dir": "Brain/Bets",
+               "bets_index": "Brain/Bets/BETS.md",
+               "conflicts_file": "Brain/CONFLICTS.md"},
+        roles=[RoleSpec(id="ceo", name="CEO")],
+        horizons={"this-week": 7, "this-month": 30,
+                  "this-quarter": 90, "strategic": 180},
+        signal_sources=[],
+        execution=ExecutionConfig(top_level_leader="ceo"),
+    )
+    assert cfg.execution.top_level_leader == "ceo"
+
+
+def test_config_execution_optional_when_absent():
+    from cns.models import Config, RoleSpec
+    cfg = Config(
+        brain={"root": "Brain", "bets_dir": "Brain/Bets",
+               "bets_index": "Brain/Bets/BETS.md",
+               "conflicts_file": "Brain/CONFLICTS.md"},
+        roles=[RoleSpec(id="ceo", name="CEO")],
+        horizons={"this-week": 7, "this-month": 30,
+                  "this-quarter": 90, "strategic": 180},
+        signal_sources=[],
+    )
+    assert cfg.execution is None
