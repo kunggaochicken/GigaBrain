@@ -187,3 +187,35 @@ def test_config_execution_optional_when_absent():
         signal_sources=[],
     )
     assert cfg.execution is None
+
+
+def test_config_role_tree_validated_when_reports_to_used():
+    with pytest.raises(ValidationError):
+        Config(
+            brain={"root": "Brain", "bets_dir": "Brain/Bets",
+                   "bets_index": "Brain/Bets/BETS.md",
+                   "conflicts_file": "Brain/CONFLICTS.md"},
+            roles=[
+                RoleSpec(id="ceo", name="CEO"),
+                RoleSpec(id="cto", name="CTO", reports_to="cfo"),  # dangling
+            ],
+            horizons={"this-week": 7, "this-month": 30,
+                      "this-quarter": 90, "strategic": 180},
+            signal_sources=[],
+        )
+
+def test_config_execution_leader_must_match_root():
+    with pytest.raises(ValidationError, match="must match the root"):
+        Config(
+            brain={"root": "Brain", "bets_dir": "Brain/Bets",
+                   "bets_index": "Brain/Bets/BETS.md",
+                   "conflicts_file": "Brain/CONFLICTS.md"},
+            roles=[
+                RoleSpec(id="ceo", name="CEO"),
+                RoleSpec(id="cto", name="CTO", reports_to="ceo"),
+            ],
+            horizons={"this-week": 7, "this-month": 30,
+                      "this-quarter": 90, "strategic": 180},
+            signal_sources=[],
+            execution=ExecutionConfig(top_level_leader="cto"),  # wrong
+        )

@@ -113,6 +113,32 @@ class Config(BaseModel):
     execution: ExecutionConfig | None = None
 
     @model_validator(mode="after")
+    def _valid_role_tree(self):
+        # Only validate the tree shape if any role uses reports_to (back-compat:
+        # legacy configs with bare {id, name} roles all default reports_to=None
+        # and are exempted unless the user has opted into the new schema).
+        if not any(r.reports_to is not None for r in self.roles):
+            # All flat: skip tree validation. This keeps v1 sample vaults working.
+            return self
+        # Otherwise, validate fully (raises RoleTreeError on failure).
+        from cns.roles import validate_role_tree
+        validate_role_tree(self.roles)
+        return self
+
+    @model_validator(mode="after")
+    def _execution_top_level_leader_is_root(self):
+        if self.execution is None:
+            return self
+        from cns.roles import find_root_role
+        root = find_root_role(self.roles)
+        if self.execution.top_level_leader != root.id:
+            raise ValueError(
+                f"execution.top_level_leader='{self.execution.top_level_leader}' "
+                f"must match the root role id='{root.id}'"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _unique_role_ids(self):
         ids = [r.id for r in self.roles]
         if len(ids) != len(set(ids)):
