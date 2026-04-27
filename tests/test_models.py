@@ -150,6 +150,21 @@ def test_role_spec_with_full_extended_fields():
     assert "pytest" in r.tools.bash_allowlist
 
 
+def test_role_spec_rejects_overlapping_workspaces():
+    """The hook's path enforcement uses first-match semantics; overlapping
+    workspaces with mismatched modes would silently block legitimate writes.
+    Reject at config time."""
+    with pytest.raises(ValidationError, match="overlapping workspaces"):
+        RoleSpec(
+            id="cto",
+            name="CTO",
+            workspaces=[
+                Workspace(path="~/code/myapp", mode="read-only"),
+                Workspace(path="~/code/myapp/src", mode="read-write"),
+            ],
+        )
+
+
 def test_execution_config_defaults():
     ec = ExecutionConfig(top_level_leader="ceo")
     assert ec.reviews_dir == "Brain/Reviews"

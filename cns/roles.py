@@ -94,16 +94,23 @@ def get_subordinates(roles: list[RoleSpec], leader_id: str) -> list[RoleSpec]:
 
 
 def resolve_workspace_path(path: str, vault_root: Path) -> Path:
-    """Expand a workspace path string to an absolute Path.
+    """Expand a workspace path string to an absolute, symlink-resolved Path.
 
     Rules:
-    - Starts with `~`: expand against $HOME.
-    - Starts with `/`: kept absolute.
-    - Otherwise: treated as vault-relative.
+    - Starts with `~`: expand against $HOME, then resolve symlinks.
+    - Starts with `/`: keep absolute, then resolve symlinks.
+    - Otherwise: treat as vault-relative, then resolve symlinks.
+
+    `resolve(strict=False)` is used so a workspace declared on a
+    not-yet-created path still resolves cleanly. Symlink resolution
+    matters because the caller (path_allowed_for_role) resolves the
+    target path; if the workspace root were left un-resolved, a system
+    where `$HOME` is a symlink (e.g. macOS `/tmp` → `/private/tmp`)
+    could produce a containment-check mismatch.
     """
     if path.startswith("~"):
-        return Path(path).expanduser()
+        return Path(path).expanduser().resolve(strict=False)
     p = Path(path)
     if p.is_absolute():
-        return p
+        return p.resolve(strict=False)
     return (vault_root / p).resolve(strict=False)

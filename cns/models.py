@@ -70,6 +70,36 @@ class RoleSpec(BaseModel):
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
     persona: str | None = None
 
+    @model_validator(mode="after")
+    def _no_overlapping_workspaces(self):
+        # Detect path overlap (one workspace contained in another). The hook's
+        # path-enforcement uses first-match semantics; overlap with mismatched
+        # modes would silently block legitimate writes. Reject at config time.
+        from pathlib import PurePosixPath
+
+        normalized = [(PurePosixPath(w.path), w) for w in self.workspaces]
+        for i, (a_path, a) in enumerate(normalized):
+            for b_path, b in normalized[i + 1 :]:
+                if _path_contains(a_path, b_path) or _path_contains(b_path, a_path):
+                    raise ValueError(
+                        f"role '{self.id}' has overlapping workspaces "
+                        f"'{a.path}' and '{b.path}'; declare a single workspace "
+                        f"covering both."
+                    )
+        return self
+
+
+def _path_contains(outer, inner) -> bool:
+    """True if `outer` is an ancestor of `inner` (string-comparison only).
+
+    No filesystem access — just lexical comparison of normalized parts.
+    Equal paths count as containment (a workspace overlaps itself trivially,
+    but the dedupe handled above by the i+1 slice avoids the self-pair).
+    """
+    o = outer.parts
+    i = inner.parts
+    return len(o) <= len(i) and i[: len(o)] == o
+
 
 class SignalSource(BaseModel):
     kind: Literal["vault_dir", "git_commits", "github_prs"]
