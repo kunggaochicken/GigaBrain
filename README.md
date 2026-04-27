@@ -1,14 +1,18 @@
 # GigaBrain CNS — Central Nervous System
 
-Atomized strategic bets with automated conflict detection for markdown vaults.
+A **delegation console for leaders**. GigaBrain models your work like a company org structure: you set vision and strategic bets, your "executives" (role-scoped agents) execute independently, and only distilled briefs requiring your decision come back up. One central place to issue direction and ingest signal — never to read raw work product.
+
+## Vision
+
+GigaBrain is built for whoever leads a team — CEO, manager, tech lead, anyone who delegates to people or agents who can mostly run independently. The leader operates at the **vision and positioning** layer; subordinates handle implementation. The system grows with you: today a flat CEO → C-suite split, eventually a recursive tree (CTO spawns VPs spawns engineers) as load demands. See [CLAUDE.md](CLAUDE.md) for the full mental model.
 
 ## What it does
 
-CNS turns scattered strategy docs (planning notes, todos, daily journals, memory files) into one-bet-per-file atoms with explicit kill criteria. A nightly detector compares your active bets against new vault edits, git commits, and GitHub PRs — and surfaces anything that contradicts an active bet. A `/spar` skill walks you through resolving conflicts one at a time.
+CNS turns scattered strategy docs (planning notes, todos, daily journals, memory files) into one-bet-per-file atoms with explicit kill criteria. A nightly detector compares your active bets against new vault edits, git commits, and GitHub PRs — and surfaces anything that contradicts an active bet. A `/spar` skill walks you through resolving conflicts one at a time. An `/execute` skill dispatches a role-scoped agent per bet to do the work and return a distilled brief.
 
 ## Why
 
-Strategic state drifts. The strategy doc you wrote in March doesn't agree with the todo list you wrote in April, and neither agrees with the code you wrote yesterday. CNS makes that drift visible and gives you a structured ritual to resolve it.
+Strategic state drifts. The strategy doc you wrote in March doesn't agree with the todo list you wrote in April, and neither agrees with the code you wrote yesterday. And the work itself drifts from the vision: things ship that nobody decided to ship, decisions get made in three places without each other knowing. CNS makes both kinds of drift visible and gives you a structured ritual to resolve them.
 
 ## Quick start
 
@@ -81,6 +85,10 @@ In Obsidian, refresh the file explorer (or just keep working — Obsidian picks 
 For interactive setup with a config wizard (instead of `cns bootstrap`'s defaults), use the `/cns-bootstrap` Claude Code skill.
 
 Full walkthrough: [docs/getting-started.md](docs/getting-started.md)
+
+## Design principle
+
+**Single console, no workspace hopping.** The vault (`Brain/`) is the only place a user needs to look to see pending bets, conflicts, and review items — even when artifacts live in external repos. See [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
