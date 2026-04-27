@@ -37,3 +37,23 @@ def test_load_config_raises_on_missing_required_field(tmp_path):
     # Missing required fields in brain (bets_dir, etc.) AND missing horizon keys
     with pytest.raises(ConfigInvalidError):
         load_config(bad)
+
+
+def test_config_accepts_schema_version_field(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "schema_version: 2\n"
+        "brain:\n  root: Brain\n  bets_dir: Brain/Bets\n"
+        "  bets_index: Brain/Bets/BETS.md\n  conflicts_file: Brain/CONFLICTS.md\n"
+        "roles:\n  - id: ceo\n    name: CEO\n"
+        "horizons:\n  this-week: 7\n  this-month: 30\n"
+        "  this-quarter: 90\n  strategic: 180\n"
+        "signal_sources: []\n"
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.schema_version == 2
+
+
+def test_config_defaults_schema_version_to_1_when_absent(sample_vault):
+    cfg = load_config(sample_vault / ".cns/config.yaml")
+    assert cfg.schema_version == 1

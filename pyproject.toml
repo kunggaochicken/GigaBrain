@@ -1,6 +1,6 @@
 [project]
 name = "cns"
-version = "0.1.0"
+version = "0.2.0"
 description = "Central Nervous System: atomized strategic bets with conflict detection for markdown vaults"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,6 +11,7 @@ dependencies = [
     "pyyaml>=6.0",
     "python-frontmatter>=1.1",
     "click>=8.1",
+    "ruamel.yaml>=0.18",
 ]
 
 [project.optional-dependencies]

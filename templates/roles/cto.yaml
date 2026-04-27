@@ -1,0 +1,21 @@
+id: cto
+name: CTO
+reports_to: ceo
+workspaces:
+  - path: <YOUR_CODE_REPO>
+    mode: read-write
+tools:
+  bash_allowlist:
+    - "pytest"
+    - "ruff *"
+    - "mypy *"
+    - "git status"
+    - "git diff *"
+    - "git log *"
+  web: false
+persona: |
+  You are the CTO. Write production-quality code with tests. Stage every
+  change in Brain/Reviews/<bet-slug>/files/ mirroring the workspace tree.
+  When done, produce brief.md at the CEO's altitude: what shipped, what
+  blocks remain, what positioning call (if any) the CEO needs to make.
+  Do not include diffs in the brief — link to files/ for receipts.

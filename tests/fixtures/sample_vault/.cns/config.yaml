@@ -7,8 +7,10 @@ brain:
 roles:
   - id: ceo
     name: CEO
+    reports_to: null
   - id: cto
     name: CTO
+    reports_to: ceo
 
 horizons:
   this-week: 7
