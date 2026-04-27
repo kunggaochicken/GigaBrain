@@ -220,10 +220,11 @@ Anything you couldn't finish, with a one-line "what would unblock me."
 
 The staging mirror under `files/` strips workspace-path prefixes so the same relative tree appears under every review dir:
 
-- Absolute paths: drop the leading `/`. `~/code/myapp/src/foo.py` → `files/code/myapp/src/foo.py`.
-- Vault-relative paths: keep as-is. `Brain/Marketing/post.md` → `files/Brain/Marketing/post.md`.
+- **Tilde-rooted paths:** expand `~` against `$HOME`, then drop the leading `/`. With `$HOME=/Users/x`, `~/code/myapp/src/foo.py` → `files/Users/x/code/myapp/src/foo.py`.
+- **Absolute paths:** drop the leading `/`. `/abs/code/foo.py` → `files/abs/code/foo.py`.
+- **Vault-relative paths:** keep as-is. `Brain/Marketing/post.md` → `files/Brain/Marketing/post.md`.
 
-`/spar` accept reverses the mapping using the workspace declarations from `config.yaml` to know which root each staged path belongs to. `files_touched[].path` in the brief frontmatter always carries the **original workspace path**, not the staged path, so the leader sees the real destination.
+`/spar` accept reverses the mapping using the workspace declarations from `config.yaml` to know which root each staged path belongs to. `files_touched[].path` in the brief frontmatter always carries the **original workspace path** (in its tilde, absolute, or vault-relative form), not the staged path, so the leader sees the real destination and the round-trip is unambiguous.
 
 ### Invariants
 

@@ -1,4 +1,4 @@
-"""Brief schema and serialization round-trip."""
+"""Brief schema, serialization, and queue operations (list_pending, accept, reject)."""
 
 from pathlib import Path
 import pytest
@@ -203,3 +203,28 @@ def test_reject_archives_without_workspace_changes(tmp_path):
 def test_accept_missing_review_raises(tmp_path):
     with pytest.raises(ReviewNotFound):
         accept_review(tmp_path / "Brain/Reviews", "nonexistent")
+
+
+def test_reject_missing_review_raises(tmp_path):
+    with pytest.raises(ReviewNotFound):
+        reject_review(tmp_path / "Brain/Reviews", "nonexistent")
+
+
+def test_accept_promotes_vault_relative_file(tmp_path):
+    """vault-relative `ft.path` (e.g. Brain/Marketing/post.md) anchors against
+    the explicitly-passed vault_root, not reviews_dir.parent.parent."""
+    vault = tmp_path / "vault"
+    reviews_dir = vault / "non/default/Reviews"
+    review_dir = reviews_dir / "x"
+    real_staged = staged_path_for("Brain/Marketing/post.md", review_dir=review_dir)
+    real_staged.parent.mkdir(parents=True, exist_ok=True)
+    real_staged.write_text("draft\n")
+    b = _sample_brief()
+    b.files_touched = [FileTouched(
+        path="Brain/Marketing/post.md", action="created", bytes=6,
+    )]
+    write_brief(review_dir / "brief.md", b)
+    accept_review(reviews_dir, "x", vault_root=vault)
+    promoted = vault / "Brain/Marketing/post.md"
+    assert promoted.exists()
+    assert promoted.read_text() == "draft\n"

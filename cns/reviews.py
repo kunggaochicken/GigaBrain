@@ -154,12 +154,16 @@ def staged_path_for(workspace_path: str, review_dir: Path) -> Path:
 
 
 def workspace_path_from_staged(staged: Path, review_dir: Path) -> Path:
-    """Inverse of `staged_path_for` for accept-time promotion.
+    """Inverse mapping from a staged path back to its absolute workspace path.
 
-    The staged path is `<review_dir>/files/<path-with-leading-slash-stripped>`.
-    For absolute and ~-rooted originals the result is absolute.
-    For vault-relative originals the result is vault-relative — the caller is
-    responsible for re-anchoring against the vault root if needed.
+    Always returns an absolute path. This is correct for staged paths whose
+    originals were absolute or tilde-rooted, but it CANNOT recover a
+    vault-relative original (the leading `/` we add was never there).
+
+    `accept_review` does not call this — it reads the original path from
+    `FileTouched.path` directly, which preserves tilde/absolute/vault-relative
+    distinctions. Prefer that approach for any new caller that needs to
+    promote a staged file.
     """
     files_root = review_dir / "files"
     rel = staged.relative_to(files_root)
@@ -197,8 +201,23 @@ def _archive_path(reviews_dir: Path, slug: str) -> Path:
     return archive_root / f"{ts}_{slug}"
 
 
-def accept_review(reviews_dir: Path, slug: str) -> Path:
+def accept_review(
+    reviews_dir: Path,
+    slug: str,
+    *,
+    vault_root: Optional[Path] = None,
+) -> Path:
     """Promote staged files into workspaces, mark brief accepted, archive the review.
+
+    Args:
+        reviews_dir: directory holding pending review subdirs (typically
+            `<vault>/Brain/Reviews/`).
+        slug: bet slug identifying which review to accept.
+        vault_root: vault root used to anchor vault-relative `FileTouched.path`
+            entries during promotion. If omitted, defaults to
+            `reviews_dir.parent.parent`, which is correct only for the
+            default `reviews_dir = Brain/Reviews`. Callers with non-default
+            `reviews_dir` config MUST pass `vault_root` explicitly.
 
     Returns the archived review directory path.
     Raises ReviewNotFound if no review exists at <reviews_dir>/<slug>/.
@@ -209,6 +228,8 @@ def accept_review(reviews_dir: Path, slug: str) -> Path:
         raise ReviewNotFound(f"no review at {review_dir}")
 
     brief = load_brief(brief_path)
+    if vault_root is None:
+        vault_root = reviews_dir.parent.parent
 
     # Promote each staged file to its original workspace path.
     for ft in brief.files_touched:
@@ -223,9 +244,6 @@ def accept_review(reviews_dir: Path, slug: str) -> Path:
         elif ft.path.startswith("/"):
             target = Path(ft.path)
         else:
-            # Vault-relative: anchor under reviews_dir's parent (the vault root).
-            # reviews_dir is typically <vault>/Brain/Reviews; we walk up two.
-            vault_root = reviews_dir.parent.parent
             target = vault_root / ft.path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(staged, target)
