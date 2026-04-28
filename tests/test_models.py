@@ -172,6 +172,13 @@ def test_execution_config_defaults():
     assert ec.reviews_dir == "Brain/Reviews"
     assert ec.default_filter == "pending"
     assert ec.artifact_max_files == 50
+    # Issue #10 — default off so existing v1 vaults keep the flat layout.
+    assert ec.reviews_dir_per_leader is False
+
+
+def test_execution_config_per_leader_flag_round_trips():
+    ec = ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True)
+    assert ec.reviews_dir_per_leader is True
 
 
 def test_execution_config_top_level_leader_required():
