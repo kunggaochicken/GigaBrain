@@ -51,3 +51,8 @@ execution:
     per_run_usd_max: null         # max for any single agent
     per_session_usd_max: null     # max cumulative across one /execute batch
     per_role_daily_usd_max: {}    # rolling-24h cap per role id, e.g. { cto: 5.00 }
+  # When false (default), reviews land in Brain/Reviews/<bet>/.
+  # When true, they land in Brain/Reviews/<leader-id>/<bet>/ — flip on once
+  # your org tree has more than one leader. Migrate with
+  # `cns vault migrate-reviews --apply`.
+  reviews_dir_per_leader: false

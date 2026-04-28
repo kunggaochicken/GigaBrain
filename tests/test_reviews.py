@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cns.models import Config, ExecutionConfig, RoleSpec
 from cns.reviews import (
     Brief,
     BriefStatus,
@@ -16,10 +17,33 @@ from cns.reviews import (
     list_pending_reviews,
     load_brief,
     reject_review,
+    reviews_root,
     staged_path_for,
     workspace_path_from_staged,
     write_brief,
 )
+
+
+def _cfg_with_execution(*, per_leader: bool = False, reviews_dir: str = "Brain/Reviews") -> Config:
+    return Config(
+        brain={
+            "root": "Brain",
+            "bets_dir": "Brain/Bets",
+            "bets_index": "Brain/Bets/BETS.md",
+            "conflicts_file": "Brain/CONFLICTS.md",
+        },
+        roles=[
+            RoleSpec(id="ceo", name="CEO"),
+            RoleSpec(id="cto", name="CTO", reports_to="ceo"),
+        ],
+        horizons={"this-week": 7, "this-month": 30, "this-quarter": 90, "strategic": 180},
+        signal_sources=[],
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            reviews_dir=reviews_dir,
+            reviews_dir_per_leader=per_leader,
+        ),
+    )
 
 
 def _sample_brief() -> Brief:
@@ -211,6 +235,54 @@ def test_accept_missing_review_raises(tmp_path):
 def test_reject_missing_review_raises(tmp_path):
     with pytest.raises(ReviewNotFound):
         reject_review(tmp_path / "Brain/Reviews", "nonexistent")
+
+
+def test_reviews_root_legacy_layout(tmp_path):
+    cfg = _cfg_with_execution(per_leader=False)
+    assert reviews_root(cfg, tmp_path) == tmp_path / "Brain/Reviews"
+    # leader_id is ignored when flag is off (legacy path is one shared queue)
+    assert reviews_root(cfg, tmp_path, leader_id="cto") == tmp_path / "Brain/Reviews"
+
+
+def test_reviews_root_per_leader_layout(tmp_path):
+    cfg = _cfg_with_execution(per_leader=True)
+    # Default leader = top_level_leader
+    assert reviews_root(cfg, tmp_path) == tmp_path / "Brain/Reviews/ceo"
+    # Explicit leader id overrides for sub-leader queues
+    assert reviews_root(cfg, tmp_path, leader_id="cto") == tmp_path / "Brain/Reviews/cto"
+
+
+def test_reviews_root_requires_execution_block(tmp_path):
+    cfg = Config(
+        brain={
+            "root": "Brain",
+            "bets_dir": "Brain/Bets",
+            "bets_index": "Brain/Bets/BETS.md",
+            "conflicts_file": "Brain/CONFLICTS.md",
+        },
+        roles=[RoleSpec(id="ceo", name="CEO")],
+        horizons={"this-week": 7, "this-month": 30, "this-quarter": 90, "strategic": 180},
+        signal_sources=[],
+    )
+    with pytest.raises(ValueError, match="execution block"):
+        reviews_root(cfg, tmp_path)
+
+
+def test_per_leader_queues_are_isolated(tmp_path):
+    """A pending review in one leader's queue must not leak into another's."""
+    cfg = _cfg_with_execution(per_leader=True)
+    ceo_root = reviews_root(cfg, tmp_path, leader_id="ceo")
+    cto_root = reviews_root(cfg, tmp_path, leader_id="cto")
+    write_brief(ceo_root / "vision_doc/brief.md", _sample_brief())
+    cto_brief = _sample_brief()
+    cto_brief.bet = "bet_refactor_db.md"
+    cto_brief.owner = "cto"
+    write_brief(cto_root / "refactor_db/brief.md", cto_brief)
+
+    ceo_pending = [s for s, _ in list_pending_reviews(ceo_root)]
+    cto_pending = [s for s, _ in list_pending_reviews(cto_root)]
+    assert ceo_pending == ["vision_doc"]
+    assert cto_pending == ["refactor_db"]
 
 
 def test_accept_promotes_vault_relative_file(tmp_path):

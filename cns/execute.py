@@ -23,7 +23,7 @@ from cns.costs import (
 )
 from cns.hooks import write_hook_config
 from cns.models import Bet, BetStatus, Config, RoleSpec
-from cns.reviews import BriefStatus, RelatedBetsSnapshot, load_brief
+from cns.reviews import BriefStatus, RelatedBetsSnapshot, load_brief, reviews_root
 
 
 class NoExecutionConfigError(RuntimeError):
@@ -95,7 +95,10 @@ def build_dispatch_queue(
         raise NoExecutionConfigError("no execution config — run `cns execute init` first")
 
     bets_dir = vault_root / cfg.brain.bets_dir
-    reviews_dir = vault_root / cfg.execution.reviews_dir
+    # Wave 1: dispatchers route to the top-level leader's queue. When
+    # recursive sub-delegation lands (issue #9) and a sub-leader dispatches,
+    # this resolver call will pass that sub-leader's id instead.
+    reviews_dir = reviews_root(cfg, vault_root)
     roles_by_id = {r.id: r for r in cfg.roles}
 
     out: list[DispatchPlanItem] = []
@@ -374,7 +377,7 @@ def build_agent_envelope(
     if cfg.execution is None:
         raise NoExecutionConfigError("no execution config — run `cns execute init` first")
 
-    review_dir = vault_root / cfg.execution.reviews_dir / item.bet_slug
+    review_dir = reviews_root(cfg, vault_root) / item.bet_slug
     review_dir.mkdir(parents=True, exist_ok=True)
 
     hook_path = write_hook_config(
