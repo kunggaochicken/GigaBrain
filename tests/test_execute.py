@@ -314,6 +314,107 @@ def test_build_envelope_includes_related_bets_snapshot(tmp_path):
     assert "same_topic_historical" in snap
 
 
+def test_skill_doc_mentions_web_tools_fields():
+    """Regression: skills/execute/SKILL.md must document tools.web AND
+    tools.web_allowlist so users know how to opt in. We assert on the file
+    text directly because the skill is the contract surface for /execute."""
+    skill = Path(__file__).parent.parent / "skills/execute/SKILL.md"
+    text = skill.read_text()
+    assert "tools.web" in text
+    assert "web_allowlist" in text
+    # The single-console archival convention must be documented too.
+    assert "sources/" in text
+    # And the prompt-enforcement caveat — see issue #20.
+    assert "prompt" in text.lower()
+
+
+def test_envelope_no_web_states_disabled(tmp_path):
+    """Roles with `tools.web: false` get an explicit no-web instruction so
+    the agent doesn't try WebFetch under prompt-only enforcement."""
+    cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")  # cmo here is web=false in fixture
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter="ship_blog",
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(item=item, vault_root=tmp_path, cfg=cfg)
+    sp = env["system_prompt"]
+    assert "Web access" in sp
+    assert "do not have web access" in sp.lower()
+
+
+def test_envelope_web_enabled_lists_allowlist_and_archive_path(tmp_path):
+    """A role with web=true must get its allowlist printed verbatim and the
+    Brain/Reviews/<slug>/sources/ archive convention documented."""
+    roles = [
+        RoleSpec(id="ceo", name="CEO"),
+        RoleSpec(
+            id="cmo",
+            name="CMO",
+            reports_to="ceo",
+            workspaces=[Workspace(path="Brain/Marketing", mode="read-write")],
+            tools=ToolPolicy(
+                web=True,
+                web_allowlist=["docs.example.com", "*.example.com"],
+            ),
+        ),
+    ]
+    cfg = _config(roles, execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter="ship_blog",
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(item=item, vault_root=tmp_path, cfg=cfg)
+    sp = env["system_prompt"]
+    assert "docs.example.com" in sp
+    assert "*.example.com" in sp
+    assert "Brain/Reviews/ship_blog/sources" in sp
+    assert "fetched_at" in sp
+    # The receipts cross-reference is what closes the audit loop.
+    assert "Receipts" in sp
+
+
+def test_envelope_web_enabled_empty_allowlist_warns_agent(tmp_path):
+    """`web: true` with an empty allowlist is legal at schema time but the
+    dispatcher must still tell the agent NOT to fetch (no domains approved)."""
+    roles = [
+        RoleSpec(id="ceo", name="CEO"),
+        RoleSpec(
+            id="cmo",
+            name="CMO",
+            reports_to="ceo",
+            workspaces=[Workspace(path="Brain/Marketing", mode="read-write")],
+            tools=ToolPolicy(web=True),  # allowlist defaulted to []
+        ),
+    ]
+    cfg = _config(roles, execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter="ship_blog",
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(item=item, vault_root=tmp_path, cfg=cfg)
+    sp = env["system_prompt"]
+    assert "allowlist is empty" in sp.lower()
+    assert "do not call webfetch" in sp.lower()
+
+
 def test_related_snapshot_classifies_by_status(tmp_path):
     """A killed bet that shares vocabulary with the target lands in
     same_topic_historical; an active one lands in same_topic_active."""

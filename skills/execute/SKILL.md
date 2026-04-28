@@ -64,6 +64,44 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
 - ALWAYS clean up `.cns/.agent-hooks/<bet-slug>.json` after the run completes (or fail loudly if it can't be cleaned). Cleanup is hygiene only — the file is not load-bearing in v0.2 (no shipped hook executor reads it; see the v0.2 limitation note above).
 - If a role has no workspaces (typically the leader role), skip it with a clear message — do NOT try to dispatch.
 
+## Web tools (`tools.web`, `tools.web_allowlist`)
+
+Roles that need to research, pull docs, or read competitor pages can opt in to
+WebFetch:
+
+```yaml
+tools:
+  web: true
+  web_allowlist:
+    - "docs.example.com"
+    - "*.example.com"
+```
+
+Rules:
+
+- `tools.web: false` (the default) means no `WebFetch` / `WebSearch`. Per-role,
+  zero exceptions.
+- `tools.web: true` requires `tools.web_allowlist` to be set; entries are domain
+  globs matched against the URL host via `fnmatch` (so `*.example.com` matches
+  any subdomain).
+- The schema also forbids the inverse: an allowlist with `web: false` is a
+  config error so YAML reviews are unambiguous.
+- The CMO template ships with `web: true` because the CMO-agent in particular
+  needs to fetch reference material; every other template defaults to `web: false`.
+
+**Source archival (single console).** Every successful WebFetch must be
+archived under `Brain/Reviews/<bet-slug>/sources/<sha256-prefix>.md` with
+frontmatter `url: <url>` and `fetched_at: <iso8601>`. This is how the leader
+audits sources without leaving the vault. The dispatcher injects these
+instructions into the agent's system prompt; the agent is responsible for
+writing the file.
+
+**Prompt-enforcement caveat.** Like path scoping (see #20), web access in v0.2
+is enforced **by the agent's system prompt only**. The hook config records
+`web_enabled` and `web_allowlist` for forward-compatibility, but no shipped
+hook executor consumes them yet. A pre-tool-use hook that gates WebFetch on the
+allowlist will land alongside the path-enforcement hook.
+
 ## Failure modes
 
 - **No execution config:** the CLI exits with "Run `cns execute init`". Offer to run it.

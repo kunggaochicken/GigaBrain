@@ -128,6 +128,44 @@ def test_tool_policy_defaults():
     t = ToolPolicy()
     assert t.bash_allowlist == []
     assert t.web is False
+    assert t.web_allowlist == []
+
+
+def test_tool_policy_web_allowlist_requires_web_enabled():
+    """Empty-or-disabled-web with a populated allowlist is a config error so
+    that YAML reviews are unambiguous about intent."""
+    with pytest.raises(ValidationError, match="web_allowlist"):
+        ToolPolicy(web=False, web_allowlist=["docs.example.com"])
+
+
+def test_tool_policy_web_enabled_with_allowlist_ok():
+    t = ToolPolicy(web=True, web_allowlist=["docs.example.com", "*.example.com"])
+    assert t.web is True
+    assert "docs.example.com" in t.web_allowlist
+
+
+def test_tool_policy_web_enabled_with_empty_allowlist_ok():
+    """`web: true` with an empty allowlist is permitted at schema time —
+    it represents 'web flag flipped but no domains approved yet'. The
+    dispatcher's prompt tells the agent to refuse fetches in that state."""
+    t = ToolPolicy(web=True)
+    assert t.web is True
+    assert t.web_allowlist == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",  # empty string
+        "https://example.com",  # scheme not allowed
+        "example.com/path",  # path not allowed
+        "exa mple.com",  # whitespace
+        "example.com:443",  # port not allowed
+    ],
+)
+def test_tool_policy_rejects_malformed_globs(bad):
+    with pytest.raises(ValidationError, match="not a valid domain glob"):
+        ToolPolicy(web=True, web_allowlist=[bad])
 
 
 def test_role_spec_extended_fields_default_safely():

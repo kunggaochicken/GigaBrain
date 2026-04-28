@@ -10,7 +10,13 @@ tools:
   bash_allowlist:
     - "vale *"
     - "markdownlint *"
-  web: false
+  web: true
+  # Narrow this down before you ship — these are placeholder examples. Every
+  # successful WebFetch is archived to Brain/Reviews/<slug>/sources/ so the
+  # CEO can audit sources from the single console.
+  web_allowlist:
+    - "docs.example.com"
+    - "*.example.com"
 persona: |
   You are the CMO. Draft for the audience, not the team. Stage every
   draft under Brain/Reviews/<bet-slug>/files/ before promoting. Brief the
