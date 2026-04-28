@@ -199,6 +199,51 @@ And these H2 sections in this order:
 """
 
 
+def _build_web_tools_section(*, role: RoleSpec, review_dir: Path) -> str:
+    """Render the system-prompt section describing web access for this role.
+
+    v0.2 ships prompt-enforcement only (see issue #20), so the dispatched
+    agent reads these instructions and refuses to fetch outside the allowlist.
+    A pre-tool-use hook that enforces the same rules will land later.
+
+    The returned string always ends with a single trailing blank line so it
+    composes cleanly with the section that follows.
+    """
+    if not role.tools.web:
+        return (
+            "## Web access\n"
+            "You do not have web access (WebFetch/WebSearch are disabled for "
+            "this role). Do not attempt to fetch URLs. If a bet requires web "
+            "research, surface that as a blocker in your brief.\n\n"
+        )
+
+    sources_dir = review_dir / "sources"
+    if role.tools.web_allowlist:
+        domains = ", ".join(f"`{d}`" for d in role.tools.web_allowlist)
+        domain_clause = (
+            f"You may use WebFetch ONLY for URLs whose host matches one of "
+            f"these domain globs: {domains}. Treat any other host as forbidden."
+        )
+    else:
+        domain_clause = (
+            "Your web allowlist is empty, which means web access is enabled "
+            "but no domains are approved. Do not call WebFetch — surface the "
+            "missing allowlist as a blocker in your brief."
+        )
+
+    return (
+        "## Web access\n"
+        f"{domain_clause}\n\n"
+        "After every successful WebFetch, archive the fetched page so the "
+        "leader can audit your sources from the single console:\n"
+        f"  - Compute `slug = sha256(url).hexdigest()[:16]`.\n"
+        f"  - Write a Markdown file at `{sources_dir}/<slug>.md`.\n"
+        "  - Frontmatter MUST contain `url:` and `fetched_at:` (ISO-8601 UTC).\n"
+        "  - Body: a short summary plus any quoted excerpts you actually used.\n"
+        "Reference these files from your brief's `## Receipts` section.\n\n"
+    )
+
+
 def _compute_related_bets_snapshot(
     *, bet: Bet, all_bets: list[tuple[Bet, str]]
 ) -> RelatedBetsSnapshot:
@@ -273,11 +318,14 @@ def build_agent_envelope(
 
     persona = item.role.persona or f"You are the {item.role.name}."
 
+    web_section = _build_web_tools_section(role=item.role, review_dir=review_dir)
+
     system_prompt = (
         f"{persona}\n\n"
         f"Your staging directory: {review_dir}\n"
         f"Stage every file you touch under {review_dir}/files/ mirroring its "
         f"absolute or vault-relative path (leading `/` stripped).\n\n"
+        f"{web_section}"
         f"{_BRIEF_SCHEMA_INSTRUCTIONS}"
     )
 

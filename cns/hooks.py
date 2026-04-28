@@ -117,7 +117,31 @@ def generate_hook_config(
         ],
         "bash_allowlist": list(role.tools.bash_allowlist),
         "web_enabled": role.tools.web,
+        "web_allowlist": list(role.tools.web_allowlist),
     }
+
+
+def web_url_allowed(url: str, *, allowlist: list[str]) -> bool:
+    """Check whether `url`'s host matches any glob pattern in `allowlist`.
+
+    Uses `fnmatch.fnmatchcase` against the lowercased URL host, which gives
+    standard shell-glob semantics: `docs.example.com` matches exactly,
+    `*.example.com` matches any subdomain. An empty allowlist always denies.
+
+    Returns False for malformed URLs (no host) rather than raising, so the
+    caller can treat all "deny" cases uniformly.
+    """
+    if not allowlist:
+        return False
+    from urllib.parse import urlparse
+
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    return any(fnmatch.fnmatchcase(host, pattern.lower()) for pattern in allowlist)
 
 
 def write_hook_config(

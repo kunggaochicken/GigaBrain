@@ -60,6 +60,41 @@ class Workspace(BaseModel):
 class ToolPolicy(BaseModel):
     bash_allowlist: list[str] = Field(default_factory=list)
     web: bool = False
+    web_allowlist: list[str] = Field(default_factory=list)
+    """Domain glob patterns the agent may fetch from when `web` is True.
+
+    Patterns are matched against the URL host via `fnmatch` (shell-glob), so
+    `docs.example.com` matches exactly that host and `*.example.com` matches
+    any subdomain. An empty list with `web=True` means *no* allowed domains
+    (effectively a kill switch); the agent will refuse to fetch.
+    """
+
+    @model_validator(mode="after")
+    def _allowlist_requires_web(self):
+        # Make YAML reviews unambiguous: if `web` is off, an allowlist is
+        # nonsense and almost certainly an editing mistake. Reject loudly.
+        if not self.web and self.web_allowlist:
+            raise ValueError(
+                "tools.web_allowlist is non-empty but tools.web is false; "
+                "set tools.web: true to enable web access, or clear the allowlist."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_web_allowlist_patterns(self):
+        # Catch obviously-malformed entries up front rather than letting them
+        # silently fail to match at fetch time. We allow only chars that can
+        # appear in a hostname plus glob metachars `*` and `?`.
+        import re
+
+        allowed = re.compile(r"^[A-Za-z0-9.\-*?]+$")
+        for pat in self.web_allowlist:
+            if not pat or not allowed.match(pat):
+                raise ValueError(
+                    f"tools.web_allowlist entry {pat!r} is not a valid domain "
+                    "glob (allowed: letters, digits, '.', '-', '*', '?')."
+                )
+        return self
 
 
 class RoleSpec(BaseModel):
