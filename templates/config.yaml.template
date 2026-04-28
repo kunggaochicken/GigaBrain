@@ -43,3 +43,11 @@ execution:
   top_level_leader: ceo
   default_filter: pending
   artifact_max_files: 50
+  # USD budget caps. `null` disables a cap. Math is done in Decimal so set
+  # values as strings or numbers; `cns execute --estimate` shows projected
+  # cost before dispatch, and the dispatcher refuses to start any agent
+  # whose estimate would breach a cap.
+  budgets:
+    per_run_usd_max: null         # max for any single agent
+    per_session_usd_max: null     # max cumulative across one /execute batch
+    per_role_daily_usd_max: {}    # rolling-24h cap per role id, e.g. { cto: 5.00 }

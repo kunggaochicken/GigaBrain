@@ -54,7 +54,23 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
      ```
    - On parse failure, leave a `brief_failed: true` flag and surface the error to the user.
 
-7. **Print final summary.** "Dispatched N bets, K produced briefs, M failed. Run `/spar` to review."
+   - **Capture cost.** The Agent tool's result carries token usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, plus the `model` id). Compute the dollar cost via `cns.pricing.cost_usd(model, usage)` and patch a `cost:` block into the brief's frontmatter:
+     ```python
+     from cns.pricing import cost_usd, canonical_model
+     from cns.reviews import CostRecord, load_brief, write_brief
+     b = load_brief(p)
+     b.cost = CostRecord(
+         model=canonical_model(model),
+         input_tokens=usage["input_tokens"],
+         output_tokens=usage["output_tokens"],
+         cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+         cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
+         usd=cost_usd(model, usage),
+     )
+     write_brief(p, b)
+     ```
+
+7. **Print final summary.** Include the per-bet cost and a session total: e.g. `Dispatched N bets ($X.XX total), K produced briefs, M failed.` Run `/spar` to review.
 
 ## Constraints
 

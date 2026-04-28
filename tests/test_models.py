@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from cns.models import (
     BetStatus,
     Config,
     Conflict,
+    ExecutionBudgets,
     ExecutionConfig,
     RoleSpec,
     ToolPolicy,
@@ -320,6 +322,44 @@ def test_all_role_templates_parse():
             if ws["path"].startswith("<"):
                 ws["path"] = "/tmp/placeholder"
         RoleSpec(**data)
+
+
+def test_execution_budgets_default_all_none():
+    """A fresh ExecutionBudgets has every cap disabled."""
+    b = ExecutionBudgets()
+    assert b.per_run_usd_max is None
+    assert b.per_session_usd_max is None
+    assert b.per_role_daily_usd_max == {}
+
+
+def test_execution_budgets_accept_decimals():
+    b = ExecutionBudgets(
+        per_run_usd_max=Decimal("2.00"),
+        per_session_usd_max=Decimal("10.00"),
+        per_role_daily_usd_max={"cto": Decimal("5.00")},
+    )
+    assert b.per_run_usd_max == Decimal("2.00")
+    assert b.per_role_daily_usd_max["cto"] == Decimal("5.00")
+
+
+def test_execution_budgets_reject_negative_per_run():
+    with pytest.raises(ValidationError, match="non-negative"):
+        ExecutionBudgets(per_run_usd_max=Decimal("-1.00"))
+
+
+def test_execution_budgets_reject_negative_per_session():
+    with pytest.raises(ValidationError, match="non-negative"):
+        ExecutionBudgets(per_session_usd_max=Decimal("-0.01"))
+
+
+def test_execution_budgets_reject_negative_per_role():
+    with pytest.raises(ValidationError, match="non-negative"):
+        ExecutionBudgets(per_role_daily_usd_max={"cto": Decimal("-3.00")})
+
+
+def test_execution_config_includes_budgets_field():
+    ec = ExecutionConfig(top_level_leader="ceo")
+    assert isinstance(ec.budgets, ExecutionBudgets)
 
 
 def test_config_template_parses():
