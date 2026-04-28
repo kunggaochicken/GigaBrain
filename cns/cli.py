@@ -17,14 +17,17 @@ from cns.daily_report import append_conflicts_section, inject_tldr_line
 from cns.detector import detect_conflicts
 from cns.execute import (
     NoExecutionConfigError,
+    annotate_with_estimates_and_budgets,
     build_agent_envelope,
     build_dispatch_queue,
 )
 from cns.index import render_bets_index
 from cns.models import BetStatus
+from cns.pricing import format_usd
 from cns.reviews import (
     ReviewNotFoundError,
     accept_review,
+    iter_all_briefs,
     list_pending_reviews,
     reject_review,
 )
@@ -273,8 +276,14 @@ def detect(vault, today):
     default=False,
     help="Print plan; do not write hook configs.",
 )
+@click.option(
+    "--estimate",
+    is_flag=True,
+    default=False,
+    help="Print expected per-bet cost and session total; do not dispatch.",
+)
 @click.argument("init_subcmd", required=False, type=click.Choice(["init"]))
-def execute(vault, bet_filter, owner_filter, include_pending, dry_run, init_subcmd):
+def execute(vault, bet_filter, owner_filter, include_pending, dry_run, estimate, init_subcmd):
     """Build the dispatch plan for /execute (or run `init` to scaffold config)."""
     if init_subcmd == "init":
         _execute_init(vault)
@@ -298,16 +307,34 @@ def execute(vault, bet_filter, owner_filter, include_pending, dry_run, init_subc
         click.echo("No active bets matched the filter.")
         return
 
+    plan = annotate_with_estimates_and_budgets(plan=plan, vault_root=root, cfg=cfg)
+
+    if estimate:
+        _print_estimate_report(plan)
+        return
+
     dispatched = [i for i in plan if i.dispatch]
     skipped = [i for i in plan if not i.dispatch]
-    click.echo(f"Plan: {len(dispatched)} to dispatch, {len(skipped)} skipped.\n")
+    session_total = sum(
+        (i.estimate.usd for i in dispatched if i.estimate is not None),
+        start=__import__("decimal").Decimal("0"),
+    )
+    click.echo(
+        f"Plan: {len(dispatched)} to dispatch, {len(skipped)} skipped. "
+        f"Estimated session cost: {format_usd(session_total)}\n"
+    )
     for item in plan:
+        cost_tag = f" [{format_usd(item.estimate.usd)}]" if item.estimate is not None else ""
         if item.dispatch:
-            click.echo(f"  [DISPATCH] bet_{item.bet_slug}.md  owner={item.owner}")
+            click.echo(f"  [DISPATCH] bet_{item.bet_slug}.md  owner={item.owner}{cost_tag}")
         else:
-            click.echo(
-                f"  [SKIP {item.skip_reason.value}] bet_{item.bet_slug}.md  owner={item.owner}"
+            line = (
+                f"  [SKIP {item.skip_reason.value}] bet_{item.bet_slug}.md  "
+                f"owner={item.owner}{cost_tag}"
             )
+            click.echo(line)
+            if item.refusal_detail:
+                click.echo(f"      {item.refusal_detail}")
 
     if dry_run:
         click.echo("\n(dry-run; no hook configs written, no agents dispatched)")
@@ -321,6 +348,35 @@ def execute(vault, bet_filter, owner_filter, include_pending, dry_run, init_subc
         "\nEnvelopes written. The /execute skill (in Claude Code) reads these "
         "and dispatches agents via the Agent tool."
     )
+
+
+def _print_estimate_report(plan):
+    """Emit the `cns execute --estimate` report. No dispatch."""
+    from decimal import Decimal
+
+    dispatchable = [i for i in plan if i.estimate is not None]
+    if not dispatchable:
+        click.echo("No dispatchable bets to estimate.")
+        return
+
+    session_total = Decimal("0")
+    click.echo("Per-bet estimates:")
+    for item in dispatchable:
+        est = item.estimate
+        line = (
+            f"  [{item.owner}] bet_{item.bet_slug}.md  "
+            f"estimated {format_usd(est.usd)} "
+            f"(input ~{est.input_tokens}, output ~{est.output_tokens})"
+        )
+        if not item.dispatch and item.skip_reason is not None:
+            line += f"  [SKIP {item.skip_reason.value}]"
+        click.echo(line)
+        if item.dispatch:
+            session_total += est.usd
+        if item.refusal_detail:
+            click.echo(f"      {item.refusal_detail}")
+
+    click.echo(f"\nSession total (dispatchable only): {format_usd(session_total)}")
 
 
 def _execute_init(vault):
@@ -418,7 +474,8 @@ def reviews_list(vault):
     click.echo(f"{len(pending)} pending review(s):\n")
     for slug, brief in pending:
         marker = " [proposed_closure]" if brief.proposed_closure else ""
-        click.echo(f"  {slug}  bet={brief.bet}  owner={brief.owner}{marker}")
+        cost_tag = f" [{format_usd(brief.cost.usd)}]" if brief.cost is not None else ""
+        click.echo(f"  {slug}  bet={brief.bet}  owner={brief.owner}{cost_tag}{marker}")
 
 
 @reviews.command("accept")
@@ -447,6 +504,88 @@ def reviews_reject(slug, vault):
     except ReviewNotFoundError as e:
         raise click.ClickException(str(e)) from e
     click.echo(f"Rejected: archived to {archived}")
+
+
+@cli.group()
+def reports():
+    """Aggregate reports across the review archive (cost, etc.)."""
+
+
+@reports.command("cost")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+@click.option("--since", "since_str", required=True, help="Lower bound date (YYYY-MM-DD).")
+@click.option(
+    "--until",
+    "until_str",
+    default=None,
+    help="Upper bound date (YYYY-MM-DD, inclusive).",
+)
+@click.option(
+    "--by",
+    "group_by",
+    type=click.Choice(["role", "bet", "day"]),
+    default="role",
+    help="Aggregation key (default: role).",
+)
+def reports_cost(vault, since_str, until_str, group_by):
+    """Summarize spend across the review archive."""
+    from collections import defaultdict
+    from datetime import date as _date
+    from datetime import datetime as _dt
+    from decimal import Decimal
+
+    root, cfg = _load_vault(vault)
+    if cfg.execution is None:
+        raise click.ClickException("no execution config — run `cns execute init` first")
+
+    try:
+        since_d = _date.fromisoformat(since_str)
+    except ValueError as e:
+        raise click.ClickException(f"invalid --since date: {e}") from e
+    if until_str:
+        try:
+            until_d = _date.fromisoformat(until_str)
+        except ValueError as e:
+            raise click.ClickException(f"invalid --until date: {e}") from e
+    else:
+        until_d = _date.today()
+
+    reviews_dir = root / cfg.execution.reviews_dir
+    totals: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    counts: dict[str, int] = defaultdict(int)
+
+    for _path, brief in iter_all_briefs(reviews_dir):
+        if brief.cost is None:
+            continue
+        # Pull the date out of the agent_run_id; if it doesn't parse, skip.
+        run_id = brief.agent_run_id
+        try:
+            run_date = _dt.fromisoformat(run_id.split("T", 1)[0]).date()
+        except ValueError:
+            continue
+        if run_date < since_d or run_date > until_d:
+            continue
+
+        if group_by == "role":
+            key = brief.owner
+        elif group_by == "bet":
+            key = brief.bet
+        else:  # day
+            key = run_date.isoformat()
+        totals[key] += brief.cost.usd
+        counts[key] += 1
+
+    if not totals:
+        click.echo(f"No costed briefs between {since_d.isoformat()} and {until_d.isoformat()}.")
+        return
+
+    grand = sum(totals.values(), start=Decimal("0"))
+    width = max(len(k) for k in totals)
+    click.echo(f"Cost report ({since_d.isoformat()} → {until_d.isoformat()}, by {group_by}):\n")
+    click.echo(f"  {'KEY'.ljust(width)}  {'COST':>10}  {'RUNS':>5}")
+    for key in sorted(totals, key=lambda k: -totals[k]):
+        click.echo(f"  {key.ljust(width)}  {format_usd(totals[key]):>10}  {counts[key]:>5}")
+    click.echo(f"\n  {'TOTAL'.ljust(width)}  {format_usd(grand):>10}  {sum(counts.values()):>5}")
 
 
 @cli.group()

@@ -360,3 +360,244 @@ def test_end_to_end_create_init_dispatch_accept(tmp_path, monkeypatch):
     archived = list(archive_dir.iterdir())
     msg = f"review not archived under {archive_dir}; saw: {archived}"
     assert any("refactor_auth_module" in p.name for p in archived), msg
+
+
+# ---------------------------------------------------------------------------
+# Issue #12: cost-controls CLI surfaces.
+# ---------------------------------------------------------------------------
+
+
+def test_execute_estimate_prints_per_bet_and_session_total(tmp_path, monkeypatch):
+    """--estimate prints '[role] estimated $X.YY' and a session total without dispatching."""
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    r = runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        "schema_version: 2\n"
+        "brain:\n  root: Brain\n  bets_dir: Brain/Bets\n"
+        "  bets_index: Brain/Bets/BETS.md\n  conflicts_file: Brain/CONFLICTS.md\n"
+        "roles:\n"
+        "  - id: ceo\n    name: CEO\n    reports_to: null\n"
+        "  - id: cto\n    name: CTO\n    reports_to: ceo\n"
+        "    workspaces:\n      - path: ~/code/myapp\n        mode: read-write\n"
+        "horizons:\n  this-week: 7\n  this-month: 30\n"
+        "  this-quarter: 90\n  strategic: 180\n"
+        "signal_sources: []\n"
+        "execution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n"
+    )
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Refactor auth module",
+        description="Move JWT logic out.",
+        owner="cto",
+        horizon="this-week",
+        confidence="medium",
+        kill_criteria="A simpler approach surfaces.",
+        body_the_bet="Extract jwt_handler.py.",
+        today=date(2026, 4, 26),
+    )
+    r = runner.invoke(cli, ["execute", "--vault", str(vault), "--estimate"])
+    assert r.exit_code == 0, r.output
+    assert "estimated $" in r.output
+    assert "[cto]" in r.output
+    assert "Session total" in r.output
+    # The dispatch path must NOT have run.
+    assert not (vault / ".cns/.agent-hooks/refactor_auth_module.json").exists()
+
+
+def test_execute_refuses_per_run_breach(tmp_path):
+    """A bet whose estimate exceeds per_run_usd_max is refused with a clear error
+    and is NOT dispatched (no hook config written)."""
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        "schema_version: 2\n"
+        "brain:\n  root: Brain\n  bets_dir: Brain/Bets\n"
+        "  bets_index: Brain/Bets/BETS.md\n  conflicts_file: Brain/CONFLICTS.md\n"
+        "roles:\n"
+        "  - id: ceo\n    name: CEO\n    reports_to: null\n"
+        "  - id: cto\n    name: CTO\n    reports_to: ceo\n"
+        "    workspaces:\n      - path: ~/code/myapp\n        mode: read-write\n"
+        "horizons:\n  this-week: 7\n  this-month: 30\n"
+        "  this-quarter: 90\n  strategic: 180\n"
+        "signal_sources: []\n"
+        "execution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n"
+        "  budgets:\n    per_run_usd_max: '0.001'\n"
+    )
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Refactor auth module",
+        description="Move JWT logic out.",
+        owner="cto",
+        horizon="this-week",
+        confidence="medium",
+        kill_criteria="A simpler approach surfaces.",
+        body_the_bet="Extract jwt_handler.py.",
+        today=date(2026, 4, 26),
+    )
+    r = runner.invoke(cli, ["execute", "--vault", str(vault), "--dry-run"])
+    assert r.exit_code == 0, r.output
+    assert "budget_per_run" in r.output
+    assert "per_run_usd_max breach" in r.output
+    assert "refactor_auth_module" in r.output
+
+
+def test_reports_cost_summarizes_by_role(tmp_path):
+    """`cns reports cost --since` walks the archive and prints a per-role table."""
+    from decimal import Decimal
+
+    from cns.reviews import Brief, BriefStatus, CostRecord, write_brief
+
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + ("\nexecution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n")
+    )
+
+    reviews_dir = vault / "Brain/Reviews"
+    for slug, owner, usd, run_id in [
+        ("a", "cto", "0.40", "2026-04-25T10-00-00Z"),
+        ("b", "cto", "0.30", "2026-04-25T11-00-00Z"),
+        ("c", "cmo", "0.10", "2026-04-25T12-00-00Z"),
+    ]:
+        d = reviews_dir / ".archive" / slug
+        d.mkdir(parents=True, exist_ok=True)
+        write_brief(
+            d / "brief.md",
+            Brief(
+                bet=f"bet_{slug}.md",
+                owner=owner,
+                agent_run_id=run_id,
+                status=BriefStatus.ACCEPTED,
+                cost=CostRecord(
+                    model="claude-opus-4-7",
+                    input_tokens=1000,
+                    output_tokens=2000,
+                    usd=Decimal(usd),
+                ),
+            ),
+        )
+
+    r = runner.invoke(
+        cli,
+        [
+            "reports",
+            "cost",
+            "--vault",
+            str(vault),
+            "--since",
+            "2026-04-25",
+            "--until",
+            "2026-04-25",
+            "--by",
+            "role",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert "cto" in r.output
+    assert "cmo" in r.output
+    assert "$0.70" in r.output  # cto total
+    assert "$0.10" in r.output  # cmo total
+    assert "TOTAL" in r.output
+
+
+def test_reports_cost_filters_outside_window(tmp_path):
+    """Briefs outside [since, until] must NOT contribute."""
+    from decimal import Decimal
+
+    from cns.reviews import Brief, BriefStatus, CostRecord, write_brief
+
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + ("\nexecution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n")
+    )
+
+    reviews_dir = vault / "Brain/Reviews"
+    d = reviews_dir / ".archive" / "old"
+    d.mkdir(parents=True, exist_ok=True)
+    write_brief(
+        d / "brief.md",
+        Brief(
+            bet="bet_old.md",
+            owner="ceo",
+            agent_run_id="2025-12-01T10-00-00Z",
+            status=BriefStatus.ACCEPTED,
+            cost=CostRecord(
+                model="claude-opus-4-7",
+                input_tokens=1,
+                output_tokens=1,
+                usd=Decimal("99.99"),
+            ),
+        ),
+    )
+
+    r = runner.invoke(
+        cli,
+        [
+            "reports",
+            "cost",
+            "--vault",
+            str(vault),
+            "--since",
+            "2026-04-01",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert "No costed briefs" in r.output
+
+
+def test_reviews_list_includes_cost_tag(tmp_path):
+    """`cns reviews list` prefixes each row with `[$X.YY]` when the brief
+    has a cost block — the `/spar` Phase 2 walk shows the same format."""
+    from decimal import Decimal
+
+    from cns.reviews import Brief, BriefStatus, CostRecord, write_brief
+
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + ("\nexecution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n")
+    )
+
+    review_dir = vault / "Brain/Reviews/sample_slug"
+    write_brief(
+        review_dir / "brief.md",
+        Brief(
+            bet="bet_sample_slug.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T00-00-00Z",
+            status=BriefStatus.PENDING,
+            cost=CostRecord(
+                model="claude-opus-4-7",
+                input_tokens=1000,
+                output_tokens=2000,
+                usd=Decimal("0.4523"),
+            ),
+        ),
+    )
+    r = runner.invoke(cli, ["reviews", "list", "--vault", str(vault)])
+    assert r.exit_code == 0, r.output
+    # The exact format the `/spar` skill is documented to expect.
+    assert "[$0.45]" in r.output
+    assert "sample_slug" in r.output

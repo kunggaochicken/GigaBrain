@@ -93,6 +93,9 @@ After the conflicts walk completes (or if there were no conflicts), enter Phase 
       - Related bets — combined snapshot + delta, with NEW items marked
       - Verification frontmatter (any failed `cmd` is a red flag — surface it)
       - `files_touched` — paths only, not diffs (unless the user picks `[v]`)
+      - **Cost** (if `brief.cost` is set): `[$X.XX]` next to the bet name, plus
+        the model and token breakdown. `cns reviews list` already prefixes
+        each row with the same `[$X.XX]` tag — keep the format identical.
 
    c. **Ask:**
       ```

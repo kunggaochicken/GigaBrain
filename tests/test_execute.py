@@ -1,6 +1,8 @@
 """Execute dispatcher — bet queue building."""
 
 import json
+from datetime import UTC
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -8,17 +10,19 @@ import pytest
 from cns.execute import (
     DispatchSkipReason,
     NoExecutionConfigError,
+    annotate_with_estimates_and_budgets,
     build_agent_envelope,
     build_dispatch_queue,
 )
 from cns.models import (
     Config,
+    ExecutionBudgets,
     ExecutionConfig,
     RoleSpec,
     ToolPolicy,
     Workspace,
 )
-from cns.reviews import Brief, BriefStatus, write_brief
+from cns.reviews import Brief, BriefStatus, CostRecord, write_brief
 
 
 def _config(roles: list[RoleSpec], execution: ExecutionConfig | None = None) -> Config:
@@ -357,3 +361,153 @@ def test_related_snapshot_classifies_by_status(tmp_path):
     # The killed bet must NOT appear in active and vice versa.
     assert "bet_dead_sibling.md" not in snap["same_topic_active"]
     assert "bet_active_sibling.md" not in snap["same_topic_historical"]
+
+
+# ---------------------------------------------------------------------------
+# Issue #12: cost estimation, budget enforcement, and brief.cost frontmatter.
+# ---------------------------------------------------------------------------
+
+
+def test_annotate_attaches_estimates_to_dispatchable_items(tmp_path):
+    cfg = _config(_executable_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    plan = annotate_with_estimates_and_budgets(plan=plan, vault_root=tmp_path, cfg=cfg)
+    dispatched = [i for i in plan if i.dispatch]
+    assert dispatched, "expected at least one dispatched item"
+    for item in dispatched:
+        assert item.estimate is not None
+        assert item.estimate.usd > Decimal("0")
+
+
+def test_annotate_per_run_cap_refuses(tmp_path):
+    cfg = _config(
+        _executable_roles(),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            budgets=ExecutionBudgets(per_run_usd_max=Decimal("0.001")),
+        ),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    plan = annotate_with_estimates_and_budgets(plan=plan, vault_root=tmp_path, cfg=cfg)
+    refused = [i for i in plan if not i.dispatch]
+    assert any(i.skip_reason == DispatchSkipReason.BUDGET_PER_RUN for i in refused)
+    refusal = next(i for i in refused if i.skip_reason == DispatchSkipReason.BUDGET_PER_RUN)
+    assert "per_run_usd_max" in refusal.refusal_detail
+    assert "ship_blog" in refusal.bet_slug
+
+
+def test_annotate_per_session_cap_refuses(tmp_path):
+    """A small per-session cap blocks the second bet."""
+    cfg = _config(
+        _executable_roles(),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            budgets=ExecutionBudgets(per_session_usd_max=Decimal("0.05")),
+        ),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    _write_bet(bets_dir, "refactor_db", "cto")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    plan = annotate_with_estimates_and_budgets(plan=plan, vault_root=tmp_path, cfg=cfg)
+    refused = [i for i in plan if not i.dispatch]
+    assert any(i.skip_reason == DispatchSkipReason.BUDGET_PER_SESSION for i in refused)
+
+
+def test_annotate_per_role_daily_cap_uses_historical(tmp_path):
+    """A pre-existing brief in the last 24h that already maxes the role
+    should cause the next dispatch to refuse."""
+    cfg = _config(
+        _executable_roles(),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            budgets=ExecutionBudgets(per_role_daily_usd_max={"cmo": Decimal("0.10")}),
+        ),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+
+    # Seed a recent CMO run that already burned the cap.
+    from datetime import datetime
+
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    review_dir = tmp_path / "Brain/Reviews/.archive/old_run"
+    write_brief(
+        review_dir / "brief.md",
+        Brief(
+            bet="bet_old.md",
+            owner="cmo",
+            agent_run_id=now_iso,
+            status=BriefStatus.ACCEPTED,
+            cost=CostRecord(
+                model="claude-opus-4-7",
+                input_tokens=1000,
+                output_tokens=2000,
+                usd=Decimal("0.10"),
+            ),
+        ),
+    )
+
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    plan = annotate_with_estimates_and_budgets(plan=plan, vault_root=tmp_path, cfg=cfg)
+    refused = [i for i in plan if not i.dispatch]
+    assert any(i.skip_reason == DispatchSkipReason.BUDGET_PER_ROLE_DAILY for i in refused)
+
+
+def test_brief_cost_frontmatter_round_trip(tmp_path):
+    """Writing a Brief with cost set, then re-loading, preserves the Decimal."""
+    from cns.reviews import load_brief
+
+    review_dir = tmp_path / "Brain/Reviews/x"
+    write_brief(
+        review_dir / "brief.md",
+        Brief(
+            bet="bet_x.md",
+            owner="cto",
+            agent_run_id="2026-04-26T10-00-00Z",
+            status=BriefStatus.PENDING,
+            cost=CostRecord(
+                model="claude-opus-4-7",
+                input_tokens=12345,
+                output_tokens=6789,
+                cache_read_tokens=1000,
+                cache_write_tokens=500,
+                usd=Decimal("0.4523"),
+            ),
+        ),
+    )
+    text = (review_dir / "brief.md").read_text()
+    # Decimal is serialized as a quoted-string-style YAML value (not float).
+    assert "0.4523" in text
+    loaded = load_brief(review_dir / "brief.md")
+    assert loaded.cost is not None
+    assert loaded.cost.usd == Decimal("0.4523")
+    assert loaded.cost.input_tokens == 12345
