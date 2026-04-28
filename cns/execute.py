@@ -644,10 +644,7 @@ def dispatch_subordinate(
     if bet.owner in chain_roles:
         return _refuse(
             DispatchSkipReason.CYCLE_DETECTED,
-            (
-                f"role '{bet.owner}' already appears in dispatch chain "
-                f"{chain_roles + [bet.owner]}"
-            ),
+            (f"role '{bet.owner}' already appears in dispatch chain {chain_roles + [bet.owner]}"),
         )
 
     # 4. Sub-role validation. Required for `build_agent_envelope` to

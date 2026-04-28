@@ -476,8 +476,7 @@ def _execute_subordinate(
 
     if not chain or chain[-1][0] != parent_role_id:
         raise click.ClickException(
-            f"--chain final entry must be the calling leader '{parent_role_id}'; "
-            f"got chain={chain}."
+            f"--chain final entry must be the calling leader '{parent_role_id}'; got chain={chain}."
         )
 
     # Parse session-spend as Decimal.
