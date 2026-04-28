@@ -1,13 +1,19 @@
 """Review entries: Brief schema, serialization, and queue operations.
 
-A review entry lives at <reviews_dir>/<bet-slug>/ and contains:
+A review entry lives at <reviews_root>/<bet-slug>/ and contains:
 - brief.md       — frontmatter + sectioned markdown
 - files/         — staged mirror of files the agent touched
 - transcript.md  — full agent transcript (audit-only)
 
+Where `<reviews_root>` is either `<vault>/<execution.reviews_dir>/` (legacy)
+or `<vault>/<execution.reviews_dir>/<leader-id>/` when
+`execution.reviews_dir_per_leader` is true. Use `reviews_root()` to compute
+it; do not hand-build the path at call sites.
+
 Provides:
 - `Brief` model + `load_brief` / `write_brief`
 - Staging path mapping: `staged_path_for` / `workspace_path_from_staged`
+- Queue root resolver: `reviews_root`
 - Queue: `list_pending_reviews`, `accept_review`, `reject_review`
 """
 
@@ -18,11 +24,14 @@ import shutil
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import frontmatter
 import yaml
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:  # avoid circular import at runtime
+    from cns.models import Config
 
 
 class BriefStatus(StrEnum):
@@ -139,6 +148,39 @@ class ReviewNotFoundError(FileNotFoundError):
 ReviewNotFound = ReviewNotFoundError
 
 
+def reviews_root(
+    cfg: Config | None,
+    vault_root: Path,
+    *,
+    leader_id: str | None = None,
+) -> Path:
+    """Return the directory holding pending review subdirs for the given leader.
+
+    Single source of truth for the `Brain/Reviews/` layout. All call sites
+    (CLI, executor, hook generator, /spar walk) MUST use this — do not stitch
+    the path together inline.
+
+    Layout:
+    - Flag off (default, v1):   `<vault>/<execution.reviews_dir>/`
+    - Flag on  (issue #10):     `<vault>/<execution.reviews_dir>/<leader_id>/`
+
+    `leader_id` defaults to `cfg.execution.top_level_leader` when omitted.
+    Until recursive sub-delegation lands (issue #9), wave-1 callers always
+    pass the top-level leader; the parameter exists so the resolver is the
+    one place that learns about deeper leaders later.
+
+    Raises `ValueError` if `cfg.execution` is None — callers should gate on
+    that themselves before computing review paths.
+    """
+    if cfg is None or cfg.execution is None:
+        raise ValueError("reviews_root requires a Config with an execution block")
+    base = vault_root / cfg.execution.reviews_dir
+    if not cfg.execution.reviews_dir_per_leader:
+        return base
+    leader = leader_id or cfg.execution.top_level_leader
+    return base / leader
+
+
 def staged_path_for(workspace_path: str, review_dir: Path) -> Path:
     """Map a workspace path to its staged location under review_dir/files/.
 
@@ -214,14 +256,17 @@ def accept_review(
     """Promote staged files into workspaces, mark brief accepted, archive the review.
 
     Args:
-        reviews_dir: directory holding pending review subdirs (typically
-            `<vault>/Brain/Reviews/`).
+        reviews_dir: directory holding pending review subdirs. Use
+            `reviews_root(cfg, vault_root, leader_id=...)` to compute this
+            correctly under both legacy (`<vault>/Brain/Reviews/`) and
+            per-leader (`<vault>/Brain/Reviews/<leader>/`) layouts.
         slug: bet slug identifying which review to accept.
         vault_root: vault root used to anchor vault-relative `FileTouched.path`
             entries during promotion. If omitted, defaults to
             `reviews_dir.parent.parent`, which is correct only for the
-            default `reviews_dir = Brain/Reviews`. Callers with non-default
-            `reviews_dir` config MUST pass `vault_root` explicitly.
+            default flat-layout `reviews_dir = <vault>/Brain/Reviews`.
+            Callers with non-default `reviews_dir`, or with the per-leader
+            layout (issue #10), MUST pass `vault_root` explicitly.
 
     Returns the archived review directory path.
     Raises ReviewNotFound if no review exists at <reviews_dir>/<slug>/.

@@ -130,6 +130,10 @@ class ExecutionConfig(BaseModel):
     top_level_leader: str
     default_filter: Literal["pending", "all"] = "pending"
     artifact_max_files: int = 50
+    # Flat (legacy) layout: <reviews_dir>/<bet-slug>/.
+    # Per-leader layout:   <reviews_dir>/<leader-id>/<bet-slug>/.
+    # Default False keeps every existing v1 vault working untouched. Issue #10.
+    reviews_dir_per_leader: bool = False
 
 
 class Config(BaseModel):

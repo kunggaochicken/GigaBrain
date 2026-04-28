@@ -27,6 +27,7 @@ from cns.reviews import (
     accept_review,
     list_pending_reviews,
     reject_review,
+    reviews_root,
 )
 from cns.roles import RoleTreeError, find_root_role
 from cns.signals import GitCommitsSignal, GitHubPRsSignal, VaultDirSignal
@@ -348,6 +349,10 @@ def _execute_init(vault):
         f"  top_level_leader: {root_role.id}\n"
         "  default_filter: pending\n"
         "  artifact_max_files: 50\n"
+        "  # Set true to use Brain/Reviews/<leader-id>/<bet>/ instead of\n"
+        "  # Brain/Reviews/<bet>/. Required once your org has more than one\n"
+        "  # leader (e.g. CTO with VPs). See `cns vault migrate-reviews`.\n"
+        "  reviews_dir_per_leader: false\n"
     )
     new_text = text.rstrip() + block
 
@@ -407,11 +412,20 @@ def reviews():
 
 @reviews.command("list")
 @click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
-def reviews_list(vault):
+@click.option(
+    "--leader",
+    "leader_id",
+    default=None,
+    help=(
+        "Leader id whose queue to walk. Defaults to execution.top_level_leader. "
+        "Only meaningful when execution.reviews_dir_per_leader is true."
+    ),
+)
+def reviews_list(vault, leader_id):
     root, cfg = _load_vault(vault)
     if cfg.execution is None:
         raise click.ClickException("no execution config — run `cns execute init` first")
-    pending = list_pending_reviews(root / cfg.execution.reviews_dir)
+    pending = list_pending_reviews(reviews_root(cfg, root, leader_id=leader_id))
     if not pending:
         click.echo("0 pending reviews.")
         return
@@ -424,12 +438,15 @@ def reviews_list(vault):
 @reviews.command("accept")
 @click.argument("slug")
 @click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
-def reviews_accept(slug, vault):
+@click.option("--leader", "leader_id", default=None, help="Leader id (per-leader layout only).")
+def reviews_accept(slug, vault, leader_id):
     root, cfg = _load_vault(vault)
     if cfg.execution is None:
         raise click.ClickException("no execution config — run `cns execute init` first")
     try:
-        archived = accept_review(root / cfg.execution.reviews_dir, slug, vault_root=root)
+        archived = accept_review(
+            reviews_root(cfg, root, leader_id=leader_id), slug, vault_root=root
+        )
     except ReviewNotFoundError as e:
         raise click.ClickException(str(e)) from e
     click.echo(f"Accepted: archived to {archived}")
@@ -438,12 +455,13 @@ def reviews_accept(slug, vault):
 @reviews.command("reject")
 @click.argument("slug")
 @click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
-def reviews_reject(slug, vault):
+@click.option("--leader", "leader_id", default=None, help="Leader id (per-leader layout only).")
+def reviews_reject(slug, vault, leader_id):
     root, cfg = _load_vault(vault)
     if cfg.execution is None:
         raise click.ClickException("no execution config — run `cns execute init` first")
     try:
-        archived = reject_review(root / cfg.execution.reviews_dir, slug)
+        archived = reject_review(reviews_root(cfg, root, leader_id=leader_id), slug)
     except ReviewNotFoundError as e:
         raise click.ClickException(str(e)) from e
     click.echo(f"Rejected: archived to {archived}")
@@ -469,3 +487,123 @@ def roles_list(vault):
             _print(child.id, depth + 1)
 
     _print(None, 0)
+
+
+@cli.group()
+def vault():
+    """Vault-level maintenance (migrations, etc.)."""
+
+
+@vault.command("migrate-reviews")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+@click.option("--apply", is_flag=True, default=False, help="Actually perform the migration.")
+@click.option(
+    "--undo",
+    is_flag=True,
+    default=False,
+    help="Reverse the per-leader migration (flatten <leader>/<slug>/ back to <slug>/).",
+)
+@click.option(
+    "--leader",
+    "leader_id",
+    default=None,
+    help=("Leader id whose subdir to migrate to/from. Defaults to execution.top_level_leader."),
+)
+def vault_migrate_reviews(vault, apply, undo, leader_id):
+    """Move flat Brain/Reviews/<slug>/ entries under Brain/Reviews/<leader>/<slug>/.
+
+    Idempotent. Default mode is dry-run — pass `--apply` to mutate the disk.
+    Use `--undo` to flatten a per-leader layout back to the legacy shape.
+
+    The migration only moves bet-slug subdirs. The `.archive/` directory is
+    left in place at the root (archive paths are preserved across the
+    layout switch by design).
+    """
+    root, cfg = _load_vault(vault)
+    if cfg.execution is None:
+        raise click.ClickException("no execution config — run `cns execute init` first")
+
+    leader = leader_id or cfg.execution.top_level_leader
+    base = root / cfg.execution.reviews_dir
+    leader_dir = base / leader
+
+    if not base.exists():
+        click.echo(f"Nothing to migrate: {base} does not exist.")
+        return
+
+    plan: list[tuple[Path, Path]] = []
+    if undo:
+        # Flatten <base>/<leader>/<slug>/ -> <base>/<slug>/. Skip if no
+        # leader subdir (already flat — idempotent).
+        if not leader_dir.exists() or not leader_dir.is_dir():
+            click.echo(f"Nothing to undo: {leader_dir} does not exist.")
+            return
+        for child in sorted(leader_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            dest = base / child.name
+            if dest.exists():
+                # Idempotent: dest already in place at base. Skip silently
+                # rather than refuse — re-running undo on an already-undone
+                # vault should be a no-op.
+                continue
+            plan.append((child, dest))
+    else:
+        # Forward migration: <base>/<slug>/ -> <base>/<leader>/<slug>/.
+        leader_dir.mkdir(parents=True, exist_ok=True) if apply else None
+        for child in sorted(base.iterdir()):
+            if not child.is_dir():
+                continue
+            # Skip the .archive dir, the leader subdir itself, and any other
+            # leader subdirs that may already exist.
+            if child.name.startswith(".") or child.name == leader:
+                continue
+            # If it looks like a leader subdir (contains only bet subdirs and
+            # no brief.md of its own), skip — it's another leader, not a bet.
+            # Heuristic: presence of brief.md = bet review; absence + only
+            # subdirs = a leader queue. Cheap check: brief.md.
+            if not (child / "brief.md").exists():
+                continue
+            dest = leader_dir / child.name
+            if dest.exists():
+                continue  # idempotent
+            plan.append((child, dest))
+
+    if not plan:
+        action = "undo" if undo else "migrate"
+        click.echo(f"Nothing to {action}; layout is already in target shape.")
+        return
+
+    verb = "WOULD MOVE" if not apply else "Moving"
+    click.echo(f"{verb} {len(plan)} review(s):")
+    for src, dest in plan:
+        click.echo(f"  {src.relative_to(root)}  ->  {dest.relative_to(root)}")
+
+    if not apply:
+        click.echo("\n(dry-run; pass --apply to perform the move)")
+        return
+
+    import shutil
+
+    if not undo:
+        leader_dir.mkdir(parents=True, exist_ok=True)
+    for src, dest in plan:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dest))
+
+    # If undoing and the leader subdir is now empty (no bet subdirs left),
+    # remove it so a re-run can be a no-op rather than seeing a stale shell.
+    if undo and leader_dir.exists():
+        remaining = [p for p in leader_dir.iterdir() if not p.name.startswith(".")]
+        if not remaining:
+            try:
+                leader_dir.rmdir()
+            except OSError:
+                pass
+
+    click.echo(f"\nDone. {len(plan)} review(s) moved.")
+    if not undo:
+        click.echo(
+            "Tip: set `execution.reviews_dir_per_leader: true` in .cns/config.yaml "
+            "to make /spar and /execute use the new layout."
+        )

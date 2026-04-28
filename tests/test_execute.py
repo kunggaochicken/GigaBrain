@@ -314,6 +314,64 @@ def test_build_envelope_includes_related_bets_snapshot(tmp_path):
     assert "same_topic_historical" in snap
 
 
+def test_build_envelope_uses_per_leader_subdir_when_flag_on(tmp_path):
+    """Flag on -> review_dir nests under the top-level leader id."""
+    cfg = _config(
+        _executable_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter="ship_blog",
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(item=item, vault_root=tmp_path, cfg=cfg)
+    review_dir = Path(env["review_dir"])
+    # /<vault>/Brain/Reviews/ceo/ship_blog/
+    assert review_dir.parent.name == "ceo"
+    assert review_dir.parent.parent.name == "Reviews"
+    # Hook config staging path mirrors that.
+    data = json.loads(Path(env["hook_config_path"]).read_text())
+    assert "/Reviews/ceo/ship_blog/files" in data["staging_dir"]
+
+
+def test_build_queue_excludes_pending_review_in_per_leader_layout(tmp_path):
+    """The pending-review check must look in the leader's subdir, not the flat root."""
+    cfg = _config(
+        _executable_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ship_blog", "cmo")
+    review_dir = tmp_path / "Brain/Reviews/ceo/ship_blog"
+    write_brief(
+        review_dir / "brief.md",
+        Brief(
+            bet="bet_ship_blog.md",
+            owner="cmo",
+            agent_run_id="2026-04-26T00-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter=None,
+        owner_filter=None,
+        include_pending=False,
+    )
+    skipped = [i for i in plan if not i.dispatch]
+    assert any(
+        i.bet_slug == "ship_blog" and i.skip_reason == DispatchSkipReason.PENDING_REVIEW
+        for i in skipped
+    )
+
+
 def test_related_snapshot_classifies_by_status(tmp_path):
     """A killed bet that shares vocabulary with the target lands in
     same_topic_historical; an active one lands in same_topic_active."""
