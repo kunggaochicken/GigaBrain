@@ -73,6 +73,19 @@ def find_root_role(roles: list[RoleSpec]) -> RoleSpec:
     raise RoleTreeError("no root role")
 
 
+def subordinates_of(roles: list[RoleSpec], leader_id: str) -> list[RoleSpec]:
+    """Return the roles that report DIRECTLY to `leader_id` (one hop only).
+
+    Used by recursive sub-delegation (issue #9): a leader-agent can only
+    spawn agents whose `reports_to` equals its own id. Use `get_subordinates`
+    when you need the transitive closure (e.g. reviews queue scoping).
+    """
+    return sorted(
+        (r for r in roles if r.reports_to == leader_id),
+        key=lambda r: r.id,
+    )
+
+
 def get_subordinates(roles: list[RoleSpec], leader_id: str) -> list[RoleSpec]:
     """Return all roles transitively reporting to `leader_id` (excludes the leader).
 

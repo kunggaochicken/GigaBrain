@@ -13,6 +13,7 @@ from cns.execute import (
     annotate_with_estimates_and_budgets,
     build_agent_envelope,
     build_dispatch_queue,
+    dispatch_subordinate,
 )
 from cns.models import (
     Config,
@@ -670,3 +671,379 @@ def test_brief_cost_frontmatter_round_trip(tmp_path):
     assert loaded.cost is not None
     assert loaded.cost.usd == Decimal("0.4523")
     assert loaded.cost.input_tokens == 12345
+
+
+# ---------------------------------------------------------------------------
+# Issue #9: recursive sub-delegation (CTO spawns engineer agents).
+# ---------------------------------------------------------------------------
+
+
+def _recursive_roles() -> list[RoleSpec]:
+    """A canonical 3-level org tree for sub-delegation tests:
+
+    ceo -> cto -> {vp_eng, engineer}
+        \\-> cmo
+    """
+    return [
+        RoleSpec(id="ceo", name="CEO"),
+        RoleSpec(
+            id="cto",
+            name="CTO",
+            reports_to="ceo",
+            workspaces=[Workspace(path="~/code/myapp", mode="read-write")],
+            tools=ToolPolicy(bash_allowlist=["pytest"]),
+        ),
+        RoleSpec(
+            id="cmo",
+            name="CMO",
+            reports_to="ceo",
+            workspaces=[Workspace(path="Brain/Marketing", mode="read-write")],
+        ),
+        RoleSpec(
+            id="vp_eng",
+            name="VP Eng",
+            reports_to="cto",
+            workspaces=[Workspace(path="~/code/myapp/engine", mode="read-write")],
+        ),
+        RoleSpec(
+            id="engineer",
+            name="Engineer",
+            reports_to="cto",
+            workspaces=[Workspace(path="~/code/myapp/engine", mode="read-write")],
+        ),
+    ]
+
+
+def test_subordinate_dispatch_routes_brief_to_parent_leader_subdir(tmp_path):
+    """Canonical CTO -> engineer flow: the engineer's brief lands in
+    Brain/Reviews/cto/<slug>/, NOT Brain/Reviews/<slug>/."""
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("cto", "refactor_auth")],
+    )
+    assert result.plan_item.dispatch is True
+    review_dir = Path(result.envelope["review_dir"])
+    # /<vault>/Brain/Reviews/cto/fix_jwt/
+    assert review_dir.parent.name == "cto"
+    assert review_dir.parent.parent.name == "Reviews"
+    # The chain extends with the new hop.
+    assert result.new_chain == [("cto", "refactor_auth"), ("engineer", "fix_jwt")]
+
+
+def test_subordinate_dispatch_refuses_non_subordinate(tmp_path):
+    """The CTO trying to dispatch a CMO-owned bet must be refused
+    with ROLE_NOT_SUBORDINATE — the CMO reports to the CEO, not the CTO."""
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "press_outreach", "cmo")
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="press_outreach",
+        parent_chain=[("cto", "refactor_auth")],
+    )
+    assert result.plan_item.dispatch is False
+    assert result.plan_item.skip_reason == DispatchSkipReason.ROLE_NOT_SUBORDINATE
+    assert "cmo" in (result.plan_item.refusal_detail or "")
+    assert result.envelope is None
+
+
+def test_subordinate_dispatch_depth_cap(tmp_path):
+    """A chain whose length already equals max_dispatch_depth refuses the
+    next sub-dispatch with DEPTH_LIMIT."""
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=2),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    # parent_chain is already length 2 (ceo -> cto). Adding engineer would make it 3.
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("ceo", "vision"), ("cto", "refactor_auth")],
+    )
+    assert result.plan_item.dispatch is False
+    assert result.plan_item.skip_reason == DispatchSkipReason.DEPTH_LIMIT
+    assert "max_dispatch_depth" in (result.plan_item.refusal_detail or "")
+
+
+def test_subordinate_dispatch_cycle_detected(tmp_path):
+    """A role that already appears in the chain trips CYCLE_DETECTED.
+    Bet slugs may legitimately repeat as escalations; only role
+    repetition counts as a cycle."""
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=10),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "engineer_thing", "engineer")
+
+    # Simulate a chain that already passed through engineer once.
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="engineer_thing",
+        parent_chain=[
+            ("ceo", "vision"),
+            ("cto", "refactor_auth"),
+            ("engineer", "first_pass"),
+            ("cto", "refactor_auth_take2"),
+        ],
+    )
+    assert result.plan_item.dispatch is False
+    assert result.plan_item.skip_reason == DispatchSkipReason.CYCLE_DETECTED
+    assert "engineer" in (result.plan_item.refusal_detail or "")
+
+
+def test_subordinate_dispatch_repeated_bet_slug_is_legitimate_escalation(tmp_path):
+    """Same bet slug appearing twice in the chain is NOT a cycle — it's
+    an escalation pattern (e.g. the same `fix_jwt` bouncing up the tree
+    after a failed first attempt)."""
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=10),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    # The vp_eng escalated `fix_jwt` to the engineer (different role,
+    # same bet). Allowed — we only forbid role repetition.
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("cto", "fix_jwt"), ("vp_eng", "fix_jwt")],
+    )
+    assert result.plan_item.dispatch is True
+
+
+def test_subordinate_dispatch_session_budget_global(tmp_path):
+    """parent_session_spend counts against per_session_usd_max — sub-dispatches
+    don't reset the cap."""
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            budgets=ExecutionBudgets(per_session_usd_max=Decimal("0.05")),
+        ),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    # Pretend the CTO already burned $0.04 — almost-but-not-quite the cap.
+    # The engineer's estimate is going to be ~$0.04+, easily pushing past.
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("cto", "refactor_auth")],
+        parent_session_spend=Decimal("0.04"),
+    )
+    assert result.plan_item.dispatch is False
+    assert result.plan_item.skip_reason == DispatchSkipReason.BUDGET_PER_SESSION
+    assert "per_session_usd_max" in (result.plan_item.refusal_detail or "")
+
+
+def test_subordinate_dispatch_per_role_daily_uses_sub_role(tmp_path):
+    """Per-role-daily cap applies to the sub-role (engineer), NOT to the
+    calling leader (cto). Pre-burn the engineer's 24h budget and watch
+    the CTO's sub-dispatch refuse."""
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            budgets=ExecutionBudgets(
+                per_role_daily_usd_max={"engineer": Decimal("0.10")},
+            ),
+        ),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    # Seed a recent engineer brief whose cost already maxes the cap.
+    from datetime import datetime
+
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    review_dir = tmp_path / "Brain/Reviews/.archive/old_run"
+    write_brief(
+        review_dir / "brief.md",
+        Brief(
+            bet="bet_old.md",
+            owner="engineer",
+            agent_run_id=now_iso,
+            status=BriefStatus.ACCEPTED,
+            cost=CostRecord(
+                model="claude-opus-4-7",
+                input_tokens=1000,
+                output_tokens=2000,
+                usd=Decimal("0.10"),
+            ),
+        ),
+    )
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("cto", "refactor_auth")],
+    )
+    assert result.plan_item.dispatch is False
+    assert result.plan_item.skip_reason == DispatchSkipReason.BUDGET_PER_ROLE_DAILY
+    assert "engineer" in (result.plan_item.refusal_detail or "")
+
+
+def test_subordinate_dispatch_extends_chain_in_envelope(tmp_path):
+    """The envelope carries the new chain so a sub-agent that wants to
+    spawn its OWN subordinate can pass it through unchanged."""
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("ceo", "vision"), ("cto", "refactor_auth")],
+    )
+    assert result.plan_item.dispatch is True
+    chain = result.envelope["chain"]
+    # JSON-friendly: lists, not tuples.
+    assert chain == [["ceo", "vision"], ["cto", "refactor_auth"], ["engineer", "fix_jwt"]]
+
+
+def test_subordinate_dispatch_session_spend_advances(tmp_path):
+    """new_session_spend = parent_session_spend + sub-agent estimate."""
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("cto", "refactor_auth")],
+        parent_session_spend=Decimal("0.10"),
+    )
+    assert result.plan_item.dispatch is True
+    est = result.plan_item.estimate
+    assert est is not None
+    assert result.new_session_spend == Decimal("0.10") + est.usd
+
+
+def test_subordinate_dispatch_missing_bet_raises(tmp_path):
+    """If the leader-agent forgot to author the sub-bet file, dispatch
+    refuses loudly with FileNotFoundError — not a silent skip — because
+    the contract is that the leader writes the file before dispatching."""
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+
+    with pytest.raises(FileNotFoundError, match="sub-bet not found"):
+        dispatch_subordinate(
+            vault_root=tmp_path,
+            cfg=cfg,
+            parent_role_id="cto",
+            sub_bet_slug="not_authored_yet",
+            parent_chain=[("cto", "refactor_auth")],
+        )
+
+
+def test_subordinate_dispatch_refuses_unknown_subordinate(tmp_path):
+    """A bet whose owner is not in cfg.roles trips the same
+    not-subordinate guard — the CTO can't dispatch into a role that
+    doesn't exist in the org tree."""
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "ghost", "phantom_role")
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="ghost",
+        parent_chain=[("cto", "refactor_auth")],
+    )
+    assert result.plan_item.dispatch is False
+    assert result.plan_item.skip_reason == DispatchSkipReason.ROLE_NOT_SUBORDINATE
+
+
+def test_top_level_envelope_carries_self_chain(tmp_path):
+    """build_agent_envelope (top-level) emits a single-entry chain so a
+    leader-agent can read it and pass it forward in a sub-dispatch."""
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "refactor_auth", "cto")
+    plan = build_dispatch_queue(
+        vault_root=tmp_path,
+        cfg=cfg,
+        bet_filter="refactor_auth",
+        owner_filter=None,
+        include_pending=False,
+    )
+    item = next(i for i in plan if i.dispatch)
+    env = build_agent_envelope(item=item, vault_root=tmp_path, cfg=cfg)
+    assert env["chain"] == [["cto", "refactor_auth"]]
+
+
+def test_subordinate_brief_invisible_to_top_level_queue(tmp_path):
+    """Acceptance criterion #3 from issue #9: the CEO's queue (the
+    top-level leader) only contains briefs the CTO explicitly escalated
+    up. Engineer-level briefs stay scoped to the CTO's per-leader subdir.
+
+    We simulate the engineer's brief landing in Brain/Reviews/cto/<slug>/
+    and verify the top-level pending list (with reviews_dir_per_leader on)
+    does NOT pick it up."""
+    from cns.reviews import list_pending_reviews, reviews_root
+
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("cto", "refactor_auth")],
+    )
+    assert result.plan_item.dispatch is True
+
+    # Pretend the engineer wrote its brief.
+    engineer_review = Path(result.envelope["review_dir"])
+    write_brief(
+        engineer_review / "brief.md",
+        Brief(
+            bet="bet_fix_jwt.md",
+            owner="engineer",
+            agent_run_id="2026-04-26T11-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+
+    # CEO's queue: empty (the engineer's brief is in cto/, not ceo/).
+    ceo_queue = list_pending_reviews(reviews_root(cfg, tmp_path, leader_id="ceo"))
+    assert ceo_queue == []
+
+    # CTO's queue: shows the engineer's brief.
+    cto_queue = list_pending_reviews(reviews_root(cfg, tmp_path, leader_id="cto"))
+    assert any(slug == "fix_jwt" for slug, _brief in cto_queue)

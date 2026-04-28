@@ -762,3 +762,235 @@ def test_reviews_list_includes_cost_tag(tmp_path):
     # The exact format the `/spar` skill is documented to expect.
     assert "[$0.45]" in r.output
     assert "sample_slug" in r.output
+
+
+# ---------------------------------------------------------------------------
+# Issue #9: recursive sub-delegation CLI.
+# ---------------------------------------------------------------------------
+
+
+def _three_level_vault(tmp_path):
+    """Bootstrap a vault wired with a CEO -> CTO -> engineer org tree.
+
+    Returns (vault_root, runner).
+    """
+    runner = CliRunner()
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner.invoke(cli, ["bootstrap", "--vault", str(vault)])
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        "schema_version: 2\n"
+        "brain:\n  root: Brain\n  bets_dir: Brain/Bets\n"
+        "  bets_index: Brain/Bets/BETS.md\n  conflicts_file: Brain/CONFLICTS.md\n"
+        "roles:\n"
+        "  - id: ceo\n    name: CEO\n    reports_to: null\n"
+        "  - id: cto\n    name: CTO\n    reports_to: ceo\n"
+        "    workspaces:\n      - path: ~/code/myapp\n        mode: read-write\n"
+        "  - id: engineer\n    name: Engineer\n    reports_to: cto\n"
+        "    workspaces:\n      - path: ~/code/myapp/engine\n        mode: read-write\n"
+        "  - id: cmo\n    name: CMO\n    reports_to: ceo\n"
+        "    workspaces:\n      - path: Brain/Marketing\n        mode: read-write\n"
+        "horizons:\n  this-week: 7\n  this-month: 30\n"
+        "  this-quarter: 90\n  strategic: 180\n"
+        "signal_sources: []\n"
+        "execution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n"
+    )
+    return vault, runner
+
+
+def test_cli_execute_from_leader_happy_path(tmp_path):
+    """`cns execute --from-leader cto --bet engineer_thing` dispatches an
+    engineer sub-agent and prints `[depth=N] [DISPATCH]` plus the per-leader
+    review_dir routing."""
+    vault, runner = _three_level_vault(tmp_path)
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Fix JWT bug",
+        description="A subtle issue in the engine.",
+        owner="engineer",
+        horizon="this-week",
+        confidence="medium",
+        kill_criteria="Bug turns out to be unrelated.",
+        body_the_bet="Patch jwt_handler.py.",
+        today=date(2026, 4, 26),
+    )
+    r = runner.invoke(
+        cli,
+        [
+            "execute",
+            "--vault",
+            str(vault),
+            "--from-leader",
+            "cto",
+            "--bet",
+            "fix_jwt_bug",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert "[DISPATCH]" in r.output
+    assert "depth=2" in r.output
+    assert "fix_jwt_bug" in r.output
+    # Routing: review_dir lands under cto/.
+    assert "Brain/Reviews/cto/fix_jwt_bug" in r.output
+
+
+def test_cli_execute_from_leader_refuses_non_subordinate(tmp_path):
+    """The CTO trying to dispatch a CMO-owned bet exits non-zero with
+    ROLE_NOT_SUBORDINATE on stderr."""
+    vault, runner = _three_level_vault(tmp_path)
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Press outreach",
+        description="x",
+        owner="cmo",
+        horizon="this-week",
+        confidence="low",
+        kill_criteria="x",
+        body_the_bet="x",
+        today=date(2026, 4, 26),
+    )
+    r = runner.invoke(
+        cli,
+        [
+            "execute",
+            "--vault",
+            str(vault),
+            "--from-leader",
+            "cto",
+            "--bet",
+            "press_outreach",
+        ],
+    )
+    assert r.exit_code != 0
+    assert "role_not_subordinate" in r.output
+
+
+def test_cli_execute_from_leader_refuses_cycle(tmp_path):
+    """A chain that already includes the sub-bet's owner exits non-zero
+    with cycle_detected on stderr."""
+    vault, runner = _three_level_vault(tmp_path)
+    # Bump the depth cap so this test isolates the cycle path; without it
+    # a synthetic chain of length 4 trips depth_limit first.
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text().replace(
+            "  top_level_leader: ceo\n",
+            "  top_level_leader: ceo\n  max_dispatch_depth: 10\n",
+        )
+    )
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Fix JWT bug",
+        description="x",
+        owner="engineer",
+        horizon="this-week",
+        confidence="low",
+        kill_criteria="x",
+        body_the_bet="x",
+        today=date(2026, 4, 26),
+    )
+    chain_json = '[["ceo","vision"],["cto","refactor"],["engineer","first_pass"],["cto","retry"]]'
+    r = runner.invoke(
+        cli,
+        [
+            "execute",
+            "--vault",
+            str(vault),
+            "--from-leader",
+            "cto",
+            "--bet",
+            "fix_jwt_bug",
+            "--chain",
+            chain_json,
+        ],
+    )
+    assert r.exit_code != 0
+    assert "cycle_detected" in r.output
+
+
+def test_cli_execute_from_leader_refuses_depth(tmp_path):
+    """When the depth cap is hit, the CLI exits non-zero with depth_limit."""
+    vault, runner = _three_level_vault(tmp_path)
+    # Lower the cap so the engineer's hop trips it. Patch in max_dispatch_depth.
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text().replace(
+            "  top_level_leader: ceo\n",
+            "  top_level_leader: ceo\n  max_dispatch_depth: 2\n",
+        )
+    )
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Fix JWT bug",
+        description="x",
+        owner="engineer",
+        horizon="this-week",
+        confidence="low",
+        kill_criteria="x",
+        body_the_bet="x",
+        today=date(2026, 4, 26),
+    )
+    chain_json = '[["ceo","vision"],["cto","refactor"]]'  # already length 2
+    r = runner.invoke(
+        cli,
+        [
+            "execute",
+            "--vault",
+            str(vault),
+            "--from-leader",
+            "cto",
+            "--bet",
+            "fix_jwt_bug",
+            "--chain",
+            chain_json,
+        ],
+    )
+    assert r.exit_code != 0
+    assert "depth_limit" in r.output
+
+
+def test_cli_execute_from_leader_requires_bet(tmp_path):
+    """Missing --bet under --from-leader is a hard error."""
+    vault, runner = _three_level_vault(tmp_path)
+    r = runner.invoke(
+        cli,
+        ["execute", "--vault", str(vault), "--from-leader", "cto"],
+    )
+    assert r.exit_code != 0
+    assert "--bet" in r.output
+
+
+def test_cli_execute_from_leader_dry_run_writes_nothing(tmp_path):
+    """--dry-run on a sub-dispatch leaves no envelope artifacts behind."""
+    vault, runner = _three_level_vault(tmp_path)
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Fix JWT bug",
+        description="x",
+        owner="engineer",
+        horizon="this-week",
+        confidence="low",
+        kill_criteria="x",
+        body_the_bet="x",
+        today=date(2026, 4, 26),
+    )
+    r = runner.invoke(
+        cli,
+        [
+            "execute",
+            "--vault",
+            str(vault),
+            "--from-leader",
+            "cto",
+            "--bet",
+            "fix_jwt_bug",
+            "--dry-run",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert "[DISPATCH]" in r.output
+    assert "(dry-run" in r.output
+    # The hook config and review subdir must be cleaned up.
+    assert not (vault / ".cns/.agent-hooks/fix_jwt_bug.json").exists()
+    assert not (vault / "Brain/Reviews/cto/fix_jwt_bug").exists()
