@@ -376,3 +376,32 @@ def test_config_template_parses():
     assert cfg.schema_version == 2
     assert cfg.execution is not None
     assert cfg.execution.top_level_leader == "ceo"
+
+
+# ---------------------------------------------------------------------------
+# Issue #9: max_dispatch_depth.
+# ---------------------------------------------------------------------------
+
+
+def test_execution_config_max_dispatch_depth_default_is_three():
+    """Default depth cap matches CLAUDE.md's canonical 3-level chain
+    (CEO -> CTO -> VP-Eng -> engineer)."""
+    ec = ExecutionConfig(top_level_leader="ceo")
+    assert ec.max_dispatch_depth == 3
+
+
+def test_execution_config_max_dispatch_depth_accepts_one():
+    """A depth of 1 disables sub-delegation entirely (top-level only).
+    The minimum valid value because depth=0 would refuse the top-level run."""
+    ec = ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=1)
+    assert ec.max_dispatch_depth == 1
+
+
+def test_execution_config_max_dispatch_depth_rejects_zero():
+    with pytest.raises(ValidationError, match=">= 1"):
+        ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=0)
+
+
+def test_execution_config_max_dispatch_depth_rejects_negative():
+    with pytest.raises(ValidationError, match=">= 1"):
+        ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=-1)

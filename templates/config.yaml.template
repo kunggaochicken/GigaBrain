@@ -43,6 +43,11 @@ execution:
   top_level_leader: ceo
   default_filter: pending
   artifact_max_files: 50
+  # When false (default), reviews land in Brain/Reviews/<bet>/.
+  # When true, they land in Brain/Reviews/<leader-id>/<bet>/ — flip on once
+  # your org tree has more than one leader. Migrate with
+  # `cns vault migrate-reviews --apply`.
+  reviews_dir_per_leader: false
   # USD budget caps. `null` disables a cap. Math is done in Decimal so set
   # values as strings or numbers; `cns execute --estimate` shows projected
   # cost before dispatch, and the dispatcher refuses to start any agent

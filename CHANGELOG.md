@@ -2,6 +2,36 @@
 
 All notable changes to GigaBrain CNS are documented here. The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.4.0 (2026-04-26)
+
+### Added — recursive sub-delegation (issue #9)
+- A leader-agent mid-run (e.g. the CTO running a top-level bet) can now spawn
+  its own subordinates by calling `cns execute --from-leader <self> --bet
+  <sub-slug>`. The dispatcher returns a per-agent envelope routed into
+  `Brain/Reviews/<self-id>/<sub-slug>/`, NOT the flat top-level queue —
+  sub-agent briefs land in their direct leader's queue and propagation up
+  the tree is an explicit choice (no auto-bubble).
+- New CLI flags on `cns execute`: `--from-leader <role-id>`, `--chain
+  '<json-pairs>'`, `--session-spend '<usd>'`. The chain is an ordered list of
+  `[role_id, bet_slug]` pairs from the top-level leader through the calling
+  leader; the dispatcher uses it for cycle and depth detection.
+- `ExecutionConfig.max_dispatch_depth: int = 3` (validated `>= 1`). Default 3
+  matches the canonical CEO -> CTO -> VP-Eng -> engineer chain in the vision
+  doc. Configurable via `.cns/config.yaml`.
+- New `DispatchSkipReason` values: `role_not_subordinate`, `depth_limit`,
+  `cycle_detected`. Cycle detection rejects any role appearing twice in the
+  chain; same bet slug repeating across different roles is a legitimate
+  escalation pattern, NOT a cycle.
+- `cns.roles.subordinates_of(roles, leader_id)` returns direct reports
+  (one hop), distinct from the existing transitive `get_subordinates`.
+- Budget propagation: per_session_usd_max is global across the recursion
+  (the running session-spend threads through `--session-spend`). Per-run cap
+  applies to each individual sub-agent. Per-role-daily applies to the
+  sub-role, not to the calling leader.
+- `skills/execute/SKILL.md` documents the sub-delegation contract: when to
+  reach for it, how to author the sub-bet, what the chain / session-spend
+  flags mean, and the full refusal table.
+
 ## v0.3.0 (2026-04-26)
 
 ### Added

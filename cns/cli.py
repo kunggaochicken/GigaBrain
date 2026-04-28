@@ -16,10 +16,12 @@ from cns.conflicts import (
 from cns.daily_report import append_conflicts_section, inject_tldr_line
 from cns.detector import detect_conflicts
 from cns.execute import (
+    DispatchSkipReason,
     NoExecutionConfigError,
     annotate_with_estimates_and_budgets,
     build_agent_envelope,
     build_dispatch_queue,
+    dispatch_subordinate,
 )
 from cns.index import render_bets_index
 from cns.models import BetStatus
@@ -283,14 +285,72 @@ def detect(vault, today):
     default=False,
     help="Print expected per-bet cost and session total; do not dispatch.",
 )
+@click.option(
+    "--from-leader",
+    "from_leader",
+    default=None,
+    help=(
+        "Recursive sub-delegation (issue #9): id of the leader-agent calling "
+        "`cns execute` from inside its own run. Requires --bet. Routes the "
+        "sub-agent's brief into the leader's per-leader subdir."
+    ),
+)
+@click.option(
+    "--chain",
+    "chain_json",
+    default=None,
+    help=(
+        "JSON-encoded list of [role_id, bet_slug] pairs representing the "
+        "in-flight dispatch chain. Used by --from-leader for cycle / depth "
+        "detection. Internal flag — humans usually don't set this."
+    ),
+)
+@click.option(
+    "--session-spend",
+    "session_spend",
+    default=None,
+    help=(
+        "USD already spent this session by ancestor dispatches (Decimal "
+        "string). Counts against per_session_usd_max."
+    ),
+)
 @click.argument("init_subcmd", required=False, type=click.Choice(["init"]))
-def execute(vault, bet_filter, owner_filter, include_pending, dry_run, estimate, init_subcmd):
+def execute(
+    vault,
+    bet_filter,
+    owner_filter,
+    include_pending,
+    dry_run,
+    estimate,
+    from_leader,
+    chain_json,
+    session_spend,
+    init_subcmd,
+):
     """Build the dispatch plan for /execute (or run `init` to scaffold config)."""
     if init_subcmd == "init":
         _execute_init(vault)
         return
 
     root, cfg = _load_vault(vault)
+
+    if from_leader is not None:
+        # Recursive sub-delegation path. We bypass build_dispatch_queue and
+        # go straight to dispatch_subordinate so cycle/depth/non-subordinate
+        # checks fire deterministically per (parent, sub) pair.
+        if not bet_filter:
+            raise click.ClickException("--from-leader requires --bet <slug>.")
+        _execute_subordinate(
+            root=root,
+            cfg=cfg,
+            parent_role_id=from_leader,
+            sub_bet_slug=bet_filter,
+            chain_json=chain_json,
+            session_spend=session_spend,
+            dry_run=dry_run,
+        )
+        return
+
     try:
         plan = build_dispatch_queue(
             vault_root=root,
@@ -378,6 +438,116 @@ def _print_estimate_report(plan):
             click.echo(f"      {item.refusal_detail}")
 
     click.echo(f"\nSession total (dispatchable only): {format_usd(session_total)}")
+
+
+def _execute_subordinate(
+    *,
+    root: Path,
+    cfg,
+    parent_role_id: str,
+    sub_bet_slug: str,
+    chain_json: str | None,
+    session_spend: str | None,
+    dry_run: bool,
+):
+    """Run the recursive sub-delegation dispatch path (issue #9).
+
+    Verifies the calling leader, parses the chain from JSON, and prints a
+    `[depth=N]` summary line. On success, writes the hook config and dumps
+    the envelope path so the calling agent can hand it to the Agent tool.
+    """
+    import json
+    from decimal import Decimal, InvalidOperation
+
+    # Parse and validate the chain. Default: an implicit single-entry chain
+    # representing the parent leader running its own (unspecified) bet.
+    if chain_json is not None:
+        try:
+            raw = json.loads(chain_json)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"invalid --chain JSON: {e}") from e
+        if not isinstance(raw, list) or not all(
+            isinstance(p, list | tuple) and len(p) == 2 for p in raw
+        ):
+            raise click.ClickException("--chain must be a JSON list of [role_id, bet_slug] pairs.")
+        chain: list[tuple[str, str]] = [(str(p[0]), str(p[1])) for p in raw]
+    else:
+        chain = [(parent_role_id, "<parent_run>")]
+
+    if not chain or chain[-1][0] != parent_role_id:
+        raise click.ClickException(
+            f"--chain final entry must be the calling leader '{parent_role_id}'; got chain={chain}."
+        )
+
+    # Parse session-spend as Decimal.
+    try:
+        spend = Decimal(session_spend) if session_spend is not None else Decimal("0")
+    except (InvalidOperation, ValueError) as e:
+        raise click.ClickException(f"invalid --session-spend: {e}") from e
+
+    try:
+        result = dispatch_subordinate(
+            vault_root=root,
+            cfg=cfg,
+            parent_role_id=parent_role_id,
+            sub_bet_slug=sub_bet_slug,
+            parent_chain=chain,
+            parent_session_spend=spend,
+        )
+    except NoExecutionConfigError as e:
+        raise click.ClickException(
+            f"{e}. Run `cns execute init` to scaffold execution config."
+        ) from e
+    except FileNotFoundError as e:
+        raise click.ClickException(str(e)) from e
+
+    item = result.plan_item
+    depth = len(result.new_chain)
+    if not item.dispatch:
+        # Surface refusal with the same enum names tests/users see elsewhere.
+        reason = item.skip_reason.value if item.skip_reason else "unknown"
+        msg = f"[depth={depth}] [SKIP {reason}] bet_{item.bet_slug}.md owner={item.owner}"
+        click.echo(msg)
+        if item.refusal_detail:
+            click.echo(f"      {item.refusal_detail}")
+        # Treat depth/cycle/non-subordinate as user-visible errors so the
+        # leader-agent's shell-out reports a non-zero exit code and refuses
+        # to proceed silently.
+        hard_refusals = {
+            DispatchSkipReason.ROLE_NOT_SUBORDINATE,
+            DispatchSkipReason.DEPTH_LIMIT,
+            DispatchSkipReason.CYCLE_DETECTED,
+        }
+        if item.skip_reason in hard_refusals:
+            raise click.ClickException(
+                f"sub-dispatch refused: {item.skip_reason.value}"
+                + (f" — {item.refusal_detail}" if item.refusal_detail else "")
+            )
+        return
+
+    cost_tag = f" [{format_usd(item.estimate.usd)}]" if item.estimate is not None else ""
+    click.echo(f"[depth={depth}] [DISPATCH] bet_{item.bet_slug}.md owner={item.owner}{cost_tag}")
+    click.echo(f"  parent_leader: {parent_role_id}")
+    click.echo(f"  review_dir:    {result.envelope['review_dir']}")
+    click.echo(f"  hook_config:   {result.envelope['hook_config_path']}")
+    click.echo(f"  chain:         {result.new_chain}")
+    click.echo(f"  running_spend: {format_usd(result.new_session_spend)}")
+
+    if dry_run:
+        # Caller asked for plan-only. We've already written the hook config
+        # via build_agent_envelope; clean it up to keep parity with the
+        # top-level --dry-run contract that doesn't leave artifacts behind.
+        hook_path = Path(result.envelope["hook_config_path"])
+        hook_path.unlink(missing_ok=True)
+        # Best-effort: remove the empty review_dir we just mkdir'd. Leave
+        # it alone if anything got written underneath (e.g. a prior real
+        # run for the same slug).
+        review_dir = Path(result.envelope["review_dir"])
+        try:
+            review_dir.rmdir()
+        except OSError:
+            pass
+        click.echo("(dry-run; envelope discarded)")
 
 
 def _execute_init(vault):

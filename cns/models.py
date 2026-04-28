@@ -199,11 +199,23 @@ class ExecutionConfig(BaseModel):
     top_level_leader: str
     default_filter: Literal["pending", "all"] = "pending"
     artifact_max_files: int = 50
-    budgets: ExecutionBudgets = Field(default_factory=ExecutionBudgets)
     # Flat (legacy) layout: <reviews_dir>/<bet-slug>/.
     # Per-leader layout:   <reviews_dir>/<leader-id>/<bet-slug>/.
     # Default False keeps every existing v1 vault working untouched. Issue #10.
     reviews_dir_per_leader: bool = False
+    budgets: ExecutionBudgets = Field(default_factory=ExecutionBudgets)
+    # Recursive sub-delegation cap (issue #9). Counts edges in the dispatch
+    # chain: 1 = top-level only (CEO -> CTO), 2 = one sub-dispatch
+    # (CEO -> CTO -> VP-Eng), 3 = two sub-dispatches (CEO -> CTO -> VP-Eng -> engineer).
+    # Default 3 matches the canonical org-tree depth in CLAUDE.md's vision.
+    max_dispatch_depth: int = 3
+
+    @field_validator("max_dispatch_depth")
+    @classmethod
+    def _depth_at_least_one(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("max_dispatch_depth must be >= 1")
+        return v
 
 
 class Config(BaseModel):

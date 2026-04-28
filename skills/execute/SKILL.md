@@ -124,3 +124,70 @@ allowlist will land alongside the path-enforcement hook.
 - **Bet owner not in roles:** the planner skips with reason `unknown_owner`. Surface to user; suggest editing the bet's `owner` field.
 - **Agent didn't write brief.md:** flag the bet as failed; user can re-dispatch with `/execute --all <slug>`.
 - **Hook config write fails:** filesystem error; surface and abort.
+
+## Recursive sub-delegation (v0.4+, issue #9)
+
+A leader-agent that's mid-run (e.g. the CTO running this bet) can spawn its
+own subordinates inline by shelling out to `cns execute --from-leader <self>
+--bet <sub-bet-slug>`. This is how the org tree extends recursively: a CTO
+that needs to delegate a piece of work to an engineer-agent can do so
+without bouncing back to the CEO.
+
+### Contract
+
+A leader-agent that wants to sub-delegate:
+
+1. **Authors the sub-bet first.** The leader writes
+   `Brain/Bets/bet_<sub-slug>.md` with the same frontmatter shape `/bet`
+   uses. The bet's `owner` MUST be a role that reports DIRECTLY to the
+   calling leader; otherwise dispatch refuses with `role_not_subordinate`.
+2. **Calls the dispatcher.** The leader runs:
+   ```
+   cns execute --from-leader <self-id> --bet <sub-slug> \
+       --chain '<chain-json>' \
+       --session-spend '<usd-decimal-string>'
+   ```
+   - `--chain` is a JSON list of `[role_id, bet_slug]` pairs starting at
+     the top-level leader and ending at the calling leader. The envelope
+     a leader-agent receives carries this chain in `envelope["chain"]` —
+     pass it through unchanged.
+   - `--session-spend` is the running USD total ancestors have already
+     spent, so the global `per_session_usd_max` cap can't be circumvented
+     by deep recursion. Pass through `envelope["new_session_spend"]` from
+     the previous hop.
+3. **Reads the sub-agent's envelope.** On success, the CLI prints
+   `[depth=N] [DISPATCH]` plus the review_dir / hook_config_path. The
+   leader hands those off to the Agent tool exactly like the top-level
+   `/execute` does.
+4. **Reviews the sub-brief.** The sub-agent's brief lands in the leader's
+   per-leader subdir: `Brain/Reviews/<self-id>/<sub-slug>/brief.md`. The
+   leader reads it, decides whether to escalate, and (if so) writes a
+   distilled summary into ITS OWN leader's queue. There is NO automatic
+   bubble-up — distillation is an explicit choice (see CLAUDE.md's vision
+   on the org-tree model).
+
+### Refusal modes
+
+The CLI exits non-zero (and the leader-agent's shell-out fails) on any of:
+
+- `role_not_subordinate` — sub-bet owner does not directly report to the
+  calling leader. Likely a typo'd `owner` field or the wrong leader id.
+- `depth_limit` — the dispatch chain would exceed
+  `execution.max_dispatch_depth` (default 3, configurable). The CEO ->
+  CTO -> VP-Eng -> engineer canonical chain is depth 3.
+- `cycle_detected` — the sub-bet's owner already appears in the chain.
+  Same role twice = cycle. Same bet slug repeating across different roles
+  is allowed (legitimate escalation pattern).
+- The standard budget refusals (`budget_per_run`, `budget_per_session`,
+  `budget_per_role_daily`) all apply: per_session is global across the
+  recursion (counts the threaded session-spend), per_role_daily applies
+  to the sub-role.
+
+### When NOT to sub-delegate
+
+If the work fits inside the calling leader's altitude — small
+implementation tweaks, a single file edit, a quick verification — just
+do it inline. Sub-delegation has overhead: another agent boot, another
+brief to read, more cost. Reach for it when the work is genuinely
+in a subordinate's domain (e.g. a CTO asking an engineer to dive into
+specific source files).
