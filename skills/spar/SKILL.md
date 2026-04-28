@@ -68,17 +68,24 @@ description: Walk through open conflicts in CONFLICTS.md one at a time, resolvin
 
 ## Phase 2: Reviews (added by /execute)
 
-After the conflicts walk completes (or if there were no conflicts), enter Phase 2 to walk pending reviews from `Brain/Reviews/<slug>/`.
+After the conflicts walk completes (or if there were no conflicts), enter Phase 2 to walk pending reviews from the leader's queue.
 
 ### Procedure
 
-1. **Locate the reviews directory.** Read the loaded config; if `cfg.execution` is None, skip Phase 2 entirely. Otherwise, walk `<vault>/<cfg.execution.reviews_dir>`.
+1. **Locate the reviews directory.** Read the loaded config; if `cfg.execution` is None, skip Phase 2 entirely.
+
+   The leader queue lives under either:
+
+   - `<vault>/<cfg.execution.reviews_dir>/<slug>/` when `reviews_dir_per_leader: false` (legacy/default), or
+   - `<vault>/<cfg.execution.reviews_dir>/<leader-id>/<slug>/` when `reviews_dir_per_leader: true`.
+
+   In wave 1, `/spar` always walks the queue belonging to `cfg.execution.top_level_leader` (that's the CEO in v1 vaults). Pass `--leader <id>` to `cns reviews ...` if you want to scope explicitly. Recursive sub-delegation (issue #9) will let a deeper leader run their own `/spar` against their own subdir; the same flag wires that up automatically.
 
 2. **Load pending reviews.** Run:
    ```bash
    cns reviews list --vault <vault>
    ```
-   Read the output. If empty, print "No pending reviews. /spar complete." and exit.
+   The CLI resolves the per-leader subdir from config; pass `--leader <id>` to override (rarely needed in wave 1). Read the output. If empty, print "No pending reviews. /spar complete." and exit.
 
 3. **Sort.** Pending reviews come back already sorted oldest-first by `agent_run_id`.
 

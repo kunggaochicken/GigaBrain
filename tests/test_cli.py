@@ -265,6 +265,167 @@ def test_roles_list_prints_tree(sample_vault):
     assert lines[cto_idx].startswith(" ") or lines[cto_idx].startswith("\t")
 
 
+def _exec_block(per_leader: bool = False) -> str:
+    leaf = "  reviews_dir_per_leader: true\n" if per_leader else ""
+    return "\nexecution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n" + leaf
+
+
+def test_reviews_list_routes_to_per_leader_subdir(sample_vault):
+    """Flag-on: `cns reviews list` reads <reviews_dir>/<leader>/, not the flat root."""
+    cfg_path = sample_vault / ".cns/config.yaml"
+    cfg_path.write_text(cfg_path.read_text() + _exec_block(per_leader=True))
+    # Drop a brief at the per-leader path; the flat path should NOT be hit.
+    leader_review = sample_vault / "Brain/Reviews/ceo/strategic_check"
+    write_brief(
+        leader_review / "brief.md",
+        Brief(
+            bet="bet_strategic_check.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T10-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    # And one in the legacy flat location that must NOT show up.
+    write_brief(
+        sample_vault / "Brain/Reviews/legacy_should_not_appear/brief.md",
+        Brief(
+            bet="bet_legacy.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T09-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    runner = CliRunner()
+    r = runner.invoke(cli, ["reviews", "list", "--vault", str(sample_vault)])
+    assert r.exit_code == 0, r.output
+    assert "strategic_check" in r.output
+    assert "legacy_should_not_appear" not in r.output
+
+
+def test_reviews_list_legacy_layout_unchanged(sample_vault):
+    """Flag-off: behavior matches the v1 default (briefs land at the flat root)."""
+    cfg_path = sample_vault / ".cns/config.yaml"
+    cfg_path.write_text(cfg_path.read_text() + _exec_block(per_leader=False))
+    write_brief(
+        sample_vault / "Brain/Reviews/flat_brief/brief.md",
+        Brief(
+            bet="bet_flat.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T09-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    runner = CliRunner()
+    r = runner.invoke(cli, ["reviews", "list", "--vault", str(sample_vault)])
+    assert r.exit_code == 0, r.output
+    assert "flat_brief" in r.output
+
+
+def test_vault_migrate_reviews_dry_run_default(sample_vault):
+    """No --apply -> nothing moves; output enumerates the plan."""
+    cfg_path = sample_vault / ".cns/config.yaml"
+    cfg_path.write_text(cfg_path.read_text() + _exec_block(per_leader=False))
+    review = sample_vault / "Brain/Reviews/foo"
+    write_brief(
+        review / "brief.md",
+        Brief(
+            bet="bet_foo.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T00-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    runner = CliRunner()
+    r = runner.invoke(cli, ["vault", "migrate-reviews", "--vault", str(sample_vault)])
+    assert r.exit_code == 0, r.output
+    assert "WOULD MOVE" in r.output
+    assert "Brain/Reviews/foo" in r.output
+    assert review.exists()  # untouched
+    assert not (sample_vault / "Brain/Reviews/ceo/foo").exists()
+
+
+def test_vault_migrate_reviews_apply_then_idempotent(sample_vault):
+    """Forward migration moves <slug>/ -> <leader>/<slug>/. Re-run is a no-op."""
+    cfg_path = sample_vault / ".cns/config.yaml"
+    cfg_path.write_text(cfg_path.read_text() + _exec_block(per_leader=False))
+    review = sample_vault / "Brain/Reviews/foo"
+    write_brief(
+        review / "brief.md",
+        Brief(
+            bet="bet_foo.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T00-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    runner = CliRunner()
+    r = runner.invoke(cli, ["vault", "migrate-reviews", "--apply", "--vault", str(sample_vault)])
+    assert r.exit_code == 0, r.output
+    assert (sample_vault / "Brain/Reviews/ceo/foo/brief.md").exists()
+    assert not review.exists()
+
+    # Idempotent: a second --apply on the migrated vault is a no-op.
+    r2 = runner.invoke(cli, ["vault", "migrate-reviews", "--apply", "--vault", str(sample_vault)])
+    assert r2.exit_code == 0, r2.output
+    assert "Nothing to migrate" in r2.output
+
+
+def test_vault_migrate_reviews_undo_reverses(sample_vault):
+    """--undo flattens <leader>/<slug>/ back to <slug>/. Idempotent on a flat vault."""
+    cfg_path = sample_vault / ".cns/config.yaml"
+    cfg_path.write_text(cfg_path.read_text() + _exec_block(per_leader=False))
+    # Start in per-leader shape directly (simulates a vault that flipped the
+    # flag and now wants to roll back).
+    write_brief(
+        sample_vault / "Brain/Reviews/ceo/foo/brief.md",
+        Brief(
+            bet="bet_foo.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T00-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    runner = CliRunner()
+    r = runner.invoke(
+        cli, ["vault", "migrate-reviews", "--undo", "--apply", "--vault", str(sample_vault)]
+    )
+    assert r.exit_code == 0, r.output
+    assert (sample_vault / "Brain/Reviews/foo/brief.md").exists()
+    assert not (sample_vault / "Brain/Reviews/ceo").exists()
+
+    # Re-running --undo on the now-flat vault is a no-op.
+    r2 = runner.invoke(
+        cli, ["vault", "migrate-reviews", "--undo", "--apply", "--vault", str(sample_vault)]
+    )
+    assert r2.exit_code == 0, r2.output
+    assert "Nothing to undo" in r2.output
+
+
+def test_vault_migrate_reviews_preserves_archive(sample_vault):
+    """The .archive/ directory must stay at the reviews root across migrations."""
+    cfg_path = sample_vault / ".cns/config.yaml"
+    cfg_path.write_text(cfg_path.read_text() + _exec_block(per_leader=False))
+    archive = sample_vault / "Brain/Reviews/.archive/2026-04-25T00-00-00Z_old"
+    archive.mkdir(parents=True)
+    (archive / "brief.md").write_text("---\nx: 1\n---\n")
+    write_brief(
+        sample_vault / "Brain/Reviews/foo/brief.md",
+        Brief(
+            bet="bet_foo.md",
+            owner="ceo",
+            agent_run_id="2026-04-26T00-00-00Z",
+            status=BriefStatus.PENDING,
+        ),
+    )
+    runner = CliRunner()
+    r = runner.invoke(cli, ["vault", "migrate-reviews", "--apply", "--vault", str(sample_vault)])
+    assert r.exit_code == 0, r.output
+    # Archive at the reviews root, untouched.
+    assert (sample_vault / "Brain/Reviews/.archive/2026-04-25T00-00-00Z_old/brief.md").exists()
+    # Bet review moved under the leader.
+    assert (sample_vault / "Brain/Reviews/ceo/foo/brief.md").exists()
+
+
 def test_end_to_end_create_init_dispatch_accept(tmp_path, monkeypatch):
     """Full loop: bootstrap a vault, init execution, write a CTO-owned bet,
     plan a dispatch, simulate a brief landing, accept it."""
