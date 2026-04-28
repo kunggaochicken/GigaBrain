@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BetStatus(StrEnum):
@@ -160,6 +161,39 @@ class AutomationConfig(BaseModel):
     daily_report: DailyReportConfig = Field(default_factory=DailyReportConfig)
 
 
+class ExecutionBudgets(BaseModel):
+    """USD budget caps enforced at dispatch time.
+
+    Any field set to None disables that cap. All caps use `Decimal` for
+    cents-exact arithmetic across long sessions.
+
+    - `per_run_usd_max`: refuses any single agent whose estimate exceeds this.
+    - `per_session_usd_max`: refuses the next agent in a batch when the
+      cumulative session estimate would exceed this.
+    - `per_role_daily_usd_max`: rolling-24h spend per role (keys are role ids).
+      Sums actual spend from accepted briefs plus the running session estimate.
+    """
+
+    per_run_usd_max: Decimal | None = None
+    per_session_usd_max: Decimal | None = None
+    per_role_daily_usd_max: dict[str, Decimal] = Field(default_factory=dict)
+
+    @field_validator("per_run_usd_max", "per_session_usd_max")
+    @classmethod
+    def _non_negative(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v < 0:
+            raise ValueError("budget caps must be non-negative")
+        return v
+
+    @field_validator("per_role_daily_usd_max")
+    @classmethod
+    def _per_role_non_negative(cls, v: dict[str, Decimal]) -> dict[str, Decimal]:
+        for role, cap in v.items():
+            if cap < 0:
+                raise ValueError(f"per_role_daily_usd_max[{role!r}] must be non-negative")
+        return v
+
+
 class ExecutionConfig(BaseModel):
     reviews_dir: str = "Brain/Reviews"
     top_level_leader: str
@@ -169,6 +203,7 @@ class ExecutionConfig(BaseModel):
     # Per-leader layout:   <reviews_dir>/<leader-id>/<bet-slug>/.
     # Default False keeps every existing v1 vault working untouched. Issue #10.
     reviews_dir_per_leader: bool = False
+    budgets: ExecutionBudgets = Field(default_factory=ExecutionBudgets)
 
 
 class Config(BaseModel):

@@ -22,13 +22,14 @@ from __future__ import annotations
 import re
 import shutil
 from datetime import UTC, datetime
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import frontmatter
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 if TYPE_CHECKING:  # avoid circular import at runtime
     from cns.models import Config
@@ -60,6 +61,35 @@ class RelatedBetsSnapshot(BaseModel):
     same_topic_historical: list[str] = Field(default_factory=list)
 
 
+class CostRecord(BaseModel):
+    """Token usage and dollar cost for one agent run.
+
+    The `usd` field is a Decimal in-memory but serialized as a YAML string
+    (e.g. "0.4523") so it round-trips through `yaml.safe_load` without
+    being silently coerced to a float and losing cent-level precision.
+    """
+
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    usd: Decimal = Decimal("0")
+
+    @field_validator("usd", mode="before")
+    @classmethod
+    def _parse_usd(cls, v):
+        if isinstance(v, Decimal):
+            return v
+        if v is None:
+            return Decimal("0")
+        return Decimal(str(v))
+
+    @field_serializer("usd")
+    def _ser_usd(self, v: Decimal) -> str:
+        return str(v)
+
+
 class Brief(BaseModel):
     """Frontmatter contract for Brain/Reviews/<bet-slug>/brief.md.
 
@@ -75,6 +105,7 @@ class Brief(BaseModel):
     related_bets_at_write: RelatedBetsSnapshot = Field(default_factory=RelatedBetsSnapshot)
     files_touched: list[FileTouched] = Field(default_factory=list)
     verification: list[VerificationResult] = Field(default_factory=list)
+    cost: CostRecord | None = None
 
     # Body sections (parsed from H2 markdown headers)
     body_tldr: str | None = None
@@ -214,6 +245,25 @@ def workspace_path_from_staged(staged: Path, review_dir: Path) -> Path:
     files_root = review_dir / "files"
     rel = staged.relative_to(files_root)
     return Path("/" + str(rel))
+
+
+def iter_all_briefs(reviews_dir: Path) -> list[tuple[Path, Brief]]:
+    """Yield every brief.md under reviews_dir (active + .archive/), at any depth.
+
+    Uses `**/brief.md` so it works under both the v0.2 layout
+    (`Brain/Reviews/<slug>/brief.md`) and a future per-leader layout
+    (`Brain/Reviews/<leader-id>/<slug>/brief.md`). Returns a list of
+    (path, brief) tuples; malformed briefs are skipped silently.
+    """
+    if not reviews_dir.exists():
+        return []
+    out: list[tuple[Path, Brief]] = []
+    for brief_path in reviews_dir.glob("**/brief.md"):
+        try:
+            out.append((brief_path, load_brief(brief_path)))
+        except Exception:
+            continue
+    return out
 
 
 def list_pending_reviews(reviews_dir: Path) -> list[tuple[str, Brief]]:

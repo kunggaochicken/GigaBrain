@@ -15,6 +15,12 @@ from enum import StrEnum
 from pathlib import Path
 
 from cns.bet import load_bet
+from cns.costs import (
+    CostEstimate,
+    enforce_budgets,
+    estimate_bet_cost,
+    role_spend_last_24h,
+)
 from cns.hooks import write_hook_config
 from cns.models import Bet, BetStatus, Config, RoleSpec
 from cns.reviews import BriefStatus, RelatedBetsSnapshot, load_brief, reviews_root
@@ -28,6 +34,9 @@ class DispatchSkipReason(StrEnum):
     PENDING_REVIEW = "pending_review"
     NO_WORKSPACES = "no_workspaces"
     UNKNOWN_OWNER = "unknown_owner"
+    BUDGET_PER_RUN = "budget_per_run"
+    BUDGET_PER_SESSION = "budget_per_session"
+    BUDGET_PER_ROLE_DAILY = "budget_per_role_daily"
 
 
 @dataclass
@@ -39,6 +48,8 @@ class DispatchPlanItem:
     role: RoleSpec | None
     dispatch: bool
     skip_reason: DispatchSkipReason | None = None
+    estimate: CostEstimate | None = None
+    refusal_detail: str | None = None  # full budget-breach message when applicable
 
 
 def _slug_from_bet_filename(filename: str) -> str:
@@ -278,6 +289,74 @@ def _compute_related_bets_snapshot(
         same_topic_active=sorted(same_active),
         same_topic_historical=sorted(same_historical),
     )
+
+
+def _budget_skip_reason(refusal_reason: str) -> DispatchSkipReason:
+    if "per_run_usd_max" in refusal_reason:
+        return DispatchSkipReason.BUDGET_PER_RUN
+    if "per_session_usd_max" in refusal_reason:
+        return DispatchSkipReason.BUDGET_PER_SESSION
+    return DispatchSkipReason.BUDGET_PER_ROLE_DAILY
+
+
+def annotate_with_estimates_and_budgets(
+    *,
+    plan: list[DispatchPlanItem],
+    vault_root: Path,
+    cfg: Config,
+    model: str = "claude-opus-4-7",
+) -> list[DispatchPlanItem]:
+    """Attach per-bet cost estimates to every dispatchable item and apply
+    `cfg.execution.budgets`. Items already skipped (PENDING_REVIEW etc.)
+    are passed through untouched. Returns the same list (mutated).
+
+    Budget refusals flip `dispatch=False`, set `skip_reason` to one of the
+    BUDGET_* values, and stash the breach message in `refusal_detail`.
+    """
+    if cfg.execution is None:
+        return plan
+
+    reviews_dir = vault_root / cfg.execution.reviews_dir
+    budgets = cfg.execution.budgets
+
+    # Estimate every dispatchable item up front (also used by --estimate).
+    estimates_for_budget: list[tuple[str, str, CostEstimate]] = []
+    for item in plan:
+        if not item.dispatch:
+            continue
+        est = estimate_bet_cost(
+            bet=item.bet,
+            role=item.owner,
+            reviews_dir=reviews_dir,
+            model=model,
+        )
+        item.estimate = est
+        estimates_for_budget.append((item.bet_slug, item.owner, est))
+
+    # Pull historical 24h spend per role once per role (not per bet).
+    roles_in_play = {role for _, role, _ in estimates_for_budget}
+    historical = {
+        role: role_spend_last_24h(reviews_dir=reviews_dir, role=role) for role in roles_in_play
+    }
+
+    decisions = enforce_budgets(
+        estimates=estimates_for_budget,
+        budgets=budgets,
+        historical_role_spend=historical,
+    )
+    decisions_by_slug = {d.bet_slug: d for d in decisions}
+
+    for item in plan:
+        if not item.dispatch:
+            continue
+        decision = decisions_by_slug.get(item.bet_slug)
+        if decision is None or decision.allowed:
+            continue
+        item.dispatch = False
+        item.skip_reason = _budget_skip_reason(decision.refusal_reason or "")
+        item.refusal_detail = decision.refusal_reason
+
+    return plan
 
 
 def build_agent_envelope(
