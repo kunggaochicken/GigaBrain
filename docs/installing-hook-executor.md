@@ -81,6 +81,32 @@ in order:
 If none of those resolve, the hook returns `allow` and gets out of the
 way.
 
+### Fail-closed on explicit-but-unresolvable slugs
+
+`$CNS_ACTIVE_BET` is the user's (or dispatcher's) explicit statement
+that a bet is active. If the env var is set but the descriptor at
+`<vault>/.cns/.agent-hooks/<slug>.json` is missing or unreadable, the
+hook **denies all gated tool calls** instead of silently falling through
+to open mode. The deny message names the missing slug and the expected
+descriptor path so the user can fix the underlying problem (or run
+`cns hook-active clear` to return to open mode). Read-style tools
+(`Read`, `Glob`, `Grep`) stay open even in this state — only writes and
+external calls are gated. This is the safer default: an in-flight
+`/execute` run that loses its descriptor should refuse tools, not
+bypass enforcement (issue #30 P1).
+
+### `cns hook-active clear` and the `.cleared` tombstone
+
+Running `cns hook-active clear` removes the `.active` sentinel **and**
+writes an empty `.cleared` tombstone next to it. The auto-detect path
+checks for the tombstone and bails (returns open mode) when it's
+present, so a leftover `<vault>/.cns/.agent-hooks/<slug>.json`
+descriptor cannot silently re-activate enforcement after the user
+explicitly cleared. The next `cns hook-active set <slug>` removes the
+tombstone, and explicit `$CNS_ACTIVE_BET` env-var resolution is
+unaffected by it (the tombstone only suppresses auto-detect, not
+explicit per-process intent — issue #30 P2).
+
 ## What the hook does NOT block
 
 - **`Read` / `Glob` / `Grep`** — `/execute` is about scoping writes and

@@ -10,14 +10,20 @@ Resolution order for the active bet slug at hook time:
 1. ``$CNS_ACTIVE_BET`` (env var, preferred — set by the dispatcher and
    inherited by the dispatched agent). Pair with ``$CNS_VAULT_ROOT`` so
    the executor can locate ``<vault>/.cns/.agent-hooks/<slug>.json``
-   without walking the tree.
+   without walking the tree. **If the env var is set but no descriptor
+   resolves, the hook FAILS CLOSED (denies all gated calls)** — the user
+   explicitly named a bet, so honor that intent rather than silently
+   bypassing enforcement (see issue #30 review feedback).
 2. Sentinel file at ``<vault>/.cns/.agent-hooks/.active`` — a one-line
    JSON record ``{"slug": "<slug>", "vault_root": "<abs path>"}``
    written at dispatch start and removed at completion. Survives across
    process boundaries when env-var propagation isn't available.
 3. Vault auto-detection: walk up from cwd looking for
    ``.cns/config.yaml``. If exactly one ``<vault>/.cns/.agent-hooks/*.json``
-   descriptor exists, treat that slug as active.
+   descriptor exists, treat that slug as active. **Suppressed when the
+   tombstone ``<vault>/.cns/.agent-hooks/.cleared`` is present** —
+   ``cns hook-active clear`` writes that marker so a stale descriptor
+   can't silently re-enable enforcement after an explicit clear.
 
 If no descriptor can be located, the executor returns ``allow`` (open
 mode). This makes the hook safe to install globally — it only enforces
@@ -50,6 +56,19 @@ from typing import Any
 from cns.hooks import HOOK_CONFIG_DIR, bash_command_allowed, web_url_allowed
 
 ACTIVE_SENTINEL_NAME = ".active"
+CLEARED_TOMBSTONE_NAME = ".cleared"
+
+
+# Sentinel returned by `locate_descriptor` when the user explicitly named a bet
+# via `$CNS_ACTIVE_BET` but no descriptor resolves. `run()` translates this into
+# a deny Decision so the hook fails closed instead of silently allowing tools.
+# See issue #30 P1 (Codex review feedback).
+class _UnresolvableSlug:
+    __slots__ = ("slug", "expected_path")
+
+    def __init__(self, slug: str, expected_path: Path) -> None:
+        self.slug = slug
+        self.expected_path = expected_path
 
 
 def write_active_sentinel(*, vault_root: Path, bet_slug: str) -> Path:
@@ -58,6 +77,9 @@ def write_active_sentinel(*, vault_root: Path, bet_slug: str) -> Path:
     Called by the dispatcher right before handing the agent envelope to the
     Agent tool. The sentinel is a fallback for hook contexts where env-var
     propagation isn't available; env-var resolution still wins when set.
+
+    Also clears the ``.cleared`` tombstone if present — explicitly setting
+    a new active bet supersedes a prior `cns hook-active clear`.
     """
     target_dir = vault_root / HOOK_CONFIG_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -71,13 +93,36 @@ def write_active_sentinel(*, vault_root: Path, bet_slug: str) -> Path:
         ),
         encoding="utf-8",
     )
+    # `set` supersedes a prior `clear`: drop the tombstone so auto-detect
+    # can resume working for this vault.
+    tombstone = target_dir / CLEARED_TOMBSTONE_NAME
+    tombstone.unlink(missing_ok=True)
     return sentinel
 
 
 def clear_active_sentinel(*, vault_root: Path) -> None:
-    """Remove the active-bet sentinel. Idempotent."""
-    sentinel = vault_root / HOOK_CONFIG_DIR / ACTIVE_SENTINEL_NAME
+    """Remove the active-bet sentinel and write the tombstone. Idempotent.
+
+    The tombstone (`.cleared`) is what makes `cns hook-active clear` mean
+    what it says: without it, a leftover ``<vault>/.cns/.agent-hooks/<slug>.json``
+    descriptor would immediately re-activate enforcement via the
+    auto-detect path. With it, auto-detect bails until the user runs
+    `cns hook-active set <slug>` (or removes `.cleared` manually).
+    See issue #30 P2 (Codex review feedback).
+    """
+    target_dir = vault_root / HOOK_CONFIG_DIR
+    sentinel = target_dir / ACTIVE_SENTINEL_NAME
     sentinel.unlink(missing_ok=True)
+    # Best-effort tombstone: only attempt to write if the dir exists or
+    # we can create it (it usually exists from prior dispatch state).
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / CLEARED_TOMBSTONE_NAME).write_text("", encoding="utf-8")
+    except OSError:
+        # If we can't write the tombstone (read-only fs, etc.), the sentinel
+        # is still gone — auto-detect may re-activate, but that's the same
+        # behavior as before this change.
+        pass
 
 
 @dataclass
@@ -115,13 +160,18 @@ def locate_descriptor(
     *,
     env: dict[str, str] | None = None,
     cwd: Path | None = None,
-) -> tuple[dict, Path] | None:
+) -> tuple[dict, Path] | _UnresolvableSlug | None:
     """Find the active bet's hook descriptor.
 
-    Returns ``(descriptor_dict, vault_root)`` on success, or ``None`` when
-    no active descriptor can be located (open mode).
+    Returns ``(descriptor_dict, vault_root)`` on success, ``None`` when no
+    active descriptor can be located (open mode), or an
+    :class:`_UnresolvableSlug` sentinel when ``$CNS_ACTIVE_BET`` is set
+    but no descriptor resolves — the caller must fail closed in that case
+    (issue #30 P1).
 
     Lookup order: env var → sentinel file → single-descriptor auto-detect.
+    The auto-detect path is suppressed when ``<vault>/.cns/.agent-hooks/.cleared``
+    exists (the tombstone written by `cns hook-active clear`, issue #30 P2).
     """
     env = env if env is not None else dict(os.environ)
     cwd = cwd or Path.cwd()
@@ -133,20 +183,28 @@ def locate_descriptor(
     if vault_root is None:
         vault_root = _walk_up_for_vault(cwd)
 
-    if vault_root is None:
-        return None
-
-    hook_dir = vault_root / HOOK_CONFIG_DIR
-
-    # 1. Env var path: explicit slug.
+    # 1. Env var path: explicit slug. Fail closed if unresolvable, even
+    # without a vault root — the user's stated intent is "this bet is
+    # active", and silently allowing all gated tools is the wrong default.
     if slug:
+        if vault_root is None:
+            # No vault to resolve against; fabricate a deterministic path
+            # for the deny message so the user knows where to look.
+            expected = Path(HOOK_CONFIG_DIR) / f"{slug}.json"
+            return _UnresolvableSlug(slug=slug, expected_path=expected)
+        hook_dir = vault_root / HOOK_CONFIG_DIR
         target = hook_dir / f"{slug}.json"
         if target.exists():
             try:
                 return json.loads(target.read_text(encoding="utf-8")), vault_root
             except json.JSONDecodeError:
-                return None
+                return _UnresolvableSlug(slug=slug, expected_path=target)
+        return _UnresolvableSlug(slug=slug, expected_path=target)
+
+    if vault_root is None:
         return None
+
+    hook_dir = vault_root / HOOK_CONFIG_DIR
 
     # 2. Sentinel file.
     sentinel = hook_dir / ACTIVE_SENTINEL_NAME
@@ -168,7 +226,14 @@ def locate_descriptor(
         except (json.JSONDecodeError, OSError):
             pass
 
-    # 3. Single-descriptor auto-detect.
+    # 3. Single-descriptor auto-detect — but only if the user hasn't
+    # explicitly cleared the active bet. The `.cleared` tombstone is what
+    # makes `cns hook-active clear` mean what it says: without this check,
+    # a stale descriptor would immediately re-activate enforcement and
+    # bind unrelated sessions. See issue #30 P2.
+    if (hook_dir / CLEARED_TOMBSTONE_NAME).exists():
+        return None
+
     if hook_dir.exists():
         candidates = [
             p
@@ -277,6 +342,13 @@ def _bash_allowed(command: str, descriptor: dict) -> tuple[bool, str]:
     )
 
 
+# Tools that the /execute hook actually gates. The fail-closed path for
+# unresolvable env-var slugs only denies these — Read/Glob/Grep stay open.
+_GATED_TOOLS = frozenset(
+    {"Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Bash"}
+)
+
+
 def evaluate(*, tool_name: str, tool_input: dict[str, Any], descriptor: dict) -> Decision:
     """Apply the per-tool enforcement rules to the (tool_name, tool_input) pair.
 
@@ -337,6 +409,30 @@ def run(
         return Decision(
             allow=True,
             reason="no active /execute descriptor; hook in open mode",
+        )
+
+    if isinstance(located, _UnresolvableSlug):
+        # Issue #30 P1: `$CNS_ACTIVE_BET` was set but no descriptor
+        # resolves. Fail closed — the user explicitly said "this bet is
+        # active", and silently allowing tools would bypass enforcement
+        # for an in-flight `/execute` run that lost its descriptor.
+        tool_name = stdin_payload.get("tool_name", "")
+        if tool_name not in _GATED_TOOLS:
+            # Don't gate Read/Glob/Grep just because the slug is bogus —
+            # those aren't enforcement-bearing in the first place.
+            return Decision(
+                allow=True,
+                reason=f"tool {tool_name!r} not gated by /execute hook",
+            )
+        return Decision(
+            allow=False,
+            reason=(
+                f"CNS_ACTIVE_BET={located.slug!r} is set but no descriptor "
+                f"exists at {located.expected_path}. Refusing tool call. "
+                "Run `cns hook-active clear` to return the hook to open "
+                "mode, or `cns hook-active set <real-slug>` if you meant "
+                "a different bet."
+            ),
         )
 
     descriptor, _vault_root = located

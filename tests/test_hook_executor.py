@@ -24,7 +24,9 @@ from pathlib import Path
 import pytest
 
 from cns.hook_executor import (
+    CLEARED_TOMBSTONE_NAME,
     Decision,
+    _UnresolvableSlug,
     clear_active_sentinel,
     evaluate,
     locate_descriptor,
@@ -270,13 +272,30 @@ def test_locate_descriptor_via_env_var(descriptor_no_web):
     assert vault_root == vault
 
 
-def test_locate_descriptor_env_var_unknown_slug_returns_none(descriptor_no_web):
+def test_locate_descriptor_env_var_unknown_slug_returns_unresolvable(descriptor_no_web):
+    """Issue #30 P1: explicit-but-missing slug must NOT silently fall through.
+
+    The user said "this bet is active"; honor that intent by signaling
+    unresolvable so the caller can deny gated tools.
+    """
     _desc, vault = descriptor_no_web
     located = locate_descriptor(
         env={"CNS_ACTIVE_BET": "nonexistent", "CNS_VAULT_ROOT": str(vault)},
         cwd=Path("/"),
     )
-    assert located is None
+    assert isinstance(located, _UnresolvableSlug)
+    assert located.slug == "nonexistent"
+    assert "nonexistent.json" in str(located.expected_path)
+
+
+def test_locate_descriptor_env_var_unknown_slug_no_vault_still_unresolvable(tmp_path):
+    """Even without a vault root, a set-but-missing slug fails closed."""
+    located = locate_descriptor(
+        env={"CNS_ACTIVE_BET": "ghost"},
+        cwd=tmp_path,
+    )
+    assert isinstance(located, _UnresolvableSlug)
+    assert located.slug == "ghost"
 
 
 def test_locate_descriptor_via_sentinel(descriptor_no_web):
@@ -334,6 +353,62 @@ def test_clear_active_sentinel_idempotent(vault):
 
 
 # ---------------------------------------------------------------------------
+# Issue #30 P2: tombstone semantics for `cns hook-active clear`
+# ---------------------------------------------------------------------------
+
+
+def test_clear_writes_tombstone(vault):
+    """`clear` must drop a `.cleared` tombstone next to the sentinel."""
+    clear_active_sentinel(vault_root=vault)
+    assert (vault / HOOK_CONFIG_DIR / CLEARED_TOMBSTONE_NAME).exists()
+
+
+def test_tombstone_suppresses_auto_detect(descriptor_no_web):
+    """Issue #30 P2: with a descriptor present and a tombstone, auto-detect bails.
+
+    The bug: `cns hook-active clear` previously didn't prevent the
+    auto-detect path from re-binding to a stale descriptor file. The
+    tombstone (`<vault>/.cns/.agent-hooks/.cleared`) is what enforces
+    the contract that `clear` returns the hook to open mode.
+    """
+    _desc, vault = descriptor_no_web
+    # Sanity: descriptor is auto-detected before clear.
+    assert locate_descriptor(env={}, cwd=vault) is not None
+    clear_active_sentinel(vault_root=vault)
+    # After clear, auto-detect must return None even though the
+    # descriptor file is still on disk.
+    assert locate_descriptor(env={}, cwd=vault) is None
+
+
+def test_set_clears_tombstone(descriptor_no_web):
+    """`hook-active set` must drop the `.cleared` tombstone so auto-detect resumes."""
+    _desc, vault = descriptor_no_web
+    clear_active_sentinel(vault_root=vault)
+    assert (vault / HOOK_CONFIG_DIR / CLEARED_TOMBSTONE_NAME).exists()
+    write_active_sentinel(vault_root=vault, bet_slug="foo")
+    # Tombstone must be gone — set supersedes clear.
+    assert not (vault / HOOK_CONFIG_DIR / CLEARED_TOMBSTONE_NAME).exists()
+    # And auto-detect (or sentinel resolution) must work again.
+    assert locate_descriptor(env={}, cwd=vault) is not None
+
+
+def test_tombstone_does_not_block_explicit_env_var(descriptor_no_web):
+    """The tombstone only suppresses auto-detect, not explicit env-var slugs.
+
+    `$CNS_ACTIVE_BET` is the dispatcher's explicit signal. A vault-level
+    tombstone shouldn't override an explicit per-process intent.
+    """
+    _desc, vault = descriptor_no_web
+    clear_active_sentinel(vault_root=vault)
+    located = locate_descriptor(
+        env={"CNS_ACTIVE_BET": "foo", "CNS_VAULT_ROOT": str(vault)},
+        cwd=Path("/"),
+    )
+    assert located is not None
+    assert not isinstance(located, _UnresolvableSlug)
+
+
+# ---------------------------------------------------------------------------
 # Open mode: hook must not interfere when no /execute is in flight
 # ---------------------------------------------------------------------------
 
@@ -364,6 +439,66 @@ def test_run_routes_through_locate(descriptor_no_web):
         cwd=Path("/"),
     )
     assert not decision.allow
+
+
+# ---------------------------------------------------------------------------
+# Issue #30 P1: env-var-set-but-unresolvable must fail closed
+# ---------------------------------------------------------------------------
+
+
+def test_run_fails_closed_when_env_var_slug_has_no_descriptor(descriptor_no_web):
+    """Issue #30 P1: `CNS_ACTIVE_BET=ghost` with no descriptor must DENY gated tools.
+
+    The pre-fix behavior fell through to open mode, which silently
+    bypassed enforcement during an active /execute run if the descriptor
+    went missing or the slug was a typo. The fix denies and surfaces the
+    expected descriptor path so the user can fix the underlying issue.
+    """
+    _desc, vault = descriptor_no_web
+    decision = run(
+        stdin_payload={
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf /"},
+        },
+        env={"CNS_ACTIVE_BET": "ghost-slug", "CNS_VAULT_ROOT": str(vault)},
+        cwd=Path("/"),
+    )
+    assert not decision.allow
+    assert "ghost-slug" in decision.reason
+    assert "hook-active clear" in decision.reason
+
+
+def test_run_unresolvable_slug_does_not_gate_reads(descriptor_no_web):
+    """Read tools shouldn't be denied just because the env-var slug is bogus.
+
+    The hook's job is gating writes/external calls; reads stay open even
+    in the fail-closed path so the user can debug from the same shell.
+    """
+    _desc, vault = descriptor_no_web
+    decision = run(
+        stdin_payload={
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/etc/hostname"},
+        },
+        env={"CNS_ACTIVE_BET": "ghost-slug", "CNS_VAULT_ROOT": str(vault)},
+        cwd=Path("/"),
+    )
+    assert decision.allow
+
+
+def test_run_fails_closed_for_edit_with_unresolvable_slug(descriptor_no_web):
+    """Edit is a gated tool — must deny with a useful message."""
+    _desc, vault = descriptor_no_web
+    decision = run(
+        stdin_payload={
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/tmp/anywhere.txt"},
+        },
+        env={"CNS_ACTIVE_BET": "typo-slug", "CNS_VAULT_ROOT": str(vault)},
+        cwd=Path("/"),
+    )
+    assert not decision.allow
+    assert "typo-slug" in decision.reason
 
 
 # ---------------------------------------------------------------------------

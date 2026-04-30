@@ -690,7 +690,11 @@ def hook_active():
 @click.argument("slug")
 @click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
 def hook_active_set(slug, vault):
-    """Mark `slug` as the active dispatch (for the PreToolUse hook)."""
+    """Mark `slug` as the active dispatch (for the PreToolUse hook).
+
+    Also drops the `.cleared` tombstone if a prior `clear` left one — a
+    fresh `set` supersedes the cleared state.
+    """
     root, _cfg = _load_vault(vault)
     sentinel = write_active_sentinel(vault_root=root, bet_slug=slug)
     click.echo(f"active bet: {slug}  ({sentinel})")
@@ -699,7 +703,13 @@ def hook_active_set(slug, vault):
 @hook_active.command("clear")
 @click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
 def hook_active_clear(vault):
-    """Clear the active-bet sentinel (returns the hook to open mode)."""
+    """Clear the active-bet sentinel (returns the hook to open mode).
+
+    Removes `.cns/.agent-hooks/.active` AND writes a `.cleared` tombstone
+    so the executor's auto-detect path can't silently re-activate
+    enforcement from a leftover descriptor (issue #30 P2). Run
+    `cns hook-active set <slug>` to resume enforcement.
+    """
     root, _cfg = _load_vault(vault)
     clear_active_sentinel(vault_root=root)
     click.echo("active bet: cleared")
