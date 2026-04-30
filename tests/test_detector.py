@@ -112,6 +112,146 @@ def test_kill_criteria_no_overfire_on_single_topic_word():
     assert conflicts == []
 
 
+def test_kill_criteria_no_overfire_on_generic_product_noun_claude():
+    """Issue #37 regression: bet_claude_code_wedge fired on a CI commit because
+    the commit's `Co-Authored-By: Claude Sonnet 4.6` trailer substring-matched
+    on 'Claude'. The new stop-list rejects 'claude' as distinctive on its own,
+    so a kill_criterion that only shares 'Claude' with the haystack must NOT
+    fire."""
+    bets = [
+        (
+            _bet(
+                kill_criteria=(
+                    "kill if Claude Code adoption stalls; "
+                    "competing attribution layers eclipse our wedge"
+                )
+            ),
+            "bet_claude_code_wedge.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="git:../gigaflow#0fa2f53",
+            content=(
+                "ci: run all test jobs on self-hosted macOS runner\n\n"
+                "Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+            ),
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=date(2026, 4, 25))
+    triggered = [c for c in conflicts if "matches kill_criteria" in c.trigger.lower()]
+    assert triggered == []
+
+
+def test_kill_criteria_no_overfire_on_expanded_acronym_aif():
+    """Issue #37 regression: bet_grounded_tau_bench fired on a RemoteBGEProvider
+    commit because the touched file path was `packages/aif_operations/...`. The
+    stop-list rejects 'aif' as distinctive on its own, and the kill_criterion's
+    other ≥5-char tokens ('metrics', 'signal') are also generic."""
+    bets = [
+        (
+            _bet(
+                kill_criteria=(
+                    "kill if AIF metrics fail; Sierra publishes a competing tau-bench writeup"
+                )
+            ),
+            "bet_grounded_tau_bench.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="git:../gigaflow#8e245f4",
+            content=(
+                "feat(embeddings): RemoteBGEProvider for self-hosted BGE-M3 daemon\n\n"
+                "touches packages/aif_operations/aif_operations/engines.py and adds metrics"
+            ),
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=date(2026, 4, 25))
+    triggered = [c for c in conflicts if "matches kill_criteria" in c.trigger.lower()]
+    assert triggered == []
+
+
+def test_kill_criteria_no_overfire_on_dispatch_word():
+    """Issue #37 regression: bet_cns_linear_layer_v1 fired on the same
+    RemoteBGEProvider PR, probably matched on 'dispatch' or another generic
+    word. The stop-list rejects 'dispatch', 'linear', 'cns' as distinctive,
+    so generic engineering vocabulary alone must NOT fire."""
+    bets = [
+        (
+            _bet(
+                kill_criteria=(
+                    "kill if CNS Linear layer cannot prevent fork-loss; "
+                    "dispatch engine drops briefs on the floor"
+                )
+            ),
+            "bet_cns_linear_layer_v1.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="github:GigaFlow-AI/gigaflow#239",
+            content=(
+                "feat(embeddings): RemoteBGEProvider for self-hosted BGE-M3 daemon. "
+                "Adds a dispatch path through the embedding engine and a linear scan "
+                "fallback for the CNS index."
+            ),
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=date(2026, 4, 25))
+    triggered = [c for c in conflicts if "matches kill_criteria" in c.trigger.lower()]
+    assert triggered == []
+
+
+def test_kill_criteria_single_distinctive_token_still_fires():
+    """Issue #37: a phrase whose only ≥5-char token is a non-generic
+    distinctive name (e.g. 'logfire') should still fire on a signal
+    mentioning that name. The stop-list narrows over-firing on generic
+    product nouns; it does not require multi-token co-occurrence in every
+    case. Phrase split on ';' so each clause is independent."""
+    bets = [
+        (
+            # Phrase tokens after split: "kill if logfire dies".
+            # ≥5 chars: 'logfire' (only). 'kill', 'dies' < 5. Single
+            # distinctive token, not in stop-list.
+            _bet(kill_criteria="kill if logfire dies"),
+            "bet_a.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="git:r#1",
+            content="logfire announces breaking API changes for next quarter",
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=date(2026, 4, 25))
+    triggered = [c for c in conflicts if "matches kill_criteria" in c.trigger.lower()]
+    assert len(triggered) == 1
+
+
+def test_kill_criteria_two_distinctive_co_occurrence_fires():
+    """Issue #37: phrases with ≥2 distinctive (non-generic, ≥5-char) tokens
+    must still fire when ≥2 co-occur in the haystack. Locks in the positive
+    half of the rule alongside the new stop-list."""
+    bets = [
+        (
+            _bet(
+                kill_criteria="kill if scipy dependency removed from requirements",
+            ),
+            "bet_a.md",
+        )
+    ]
+    signals = [
+        Signal(
+            source="git:r#1",
+            content="fix: scipy dependency removed from requirements.txt",
+        )
+    ]
+    conflicts = detect_conflicts(bets, signals, _config(), today=date(2026, 4, 25))
+    triggered = [c for c in conflicts if "matches kill_criteria" in c.trigger.lower()]
+    assert len(triggered) == 1
+
+
 def test_kill_criteria_unspecified_persistently_flags():
     # last_reviewed before today: the unspecified flag persists across days.
     bets = [
