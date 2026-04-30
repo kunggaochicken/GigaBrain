@@ -40,8 +40,9 @@ def detect_conflicts(
     Five detection modes (v0.2 heuristics — tightened from v0.1 to reduce
     over-fire on shared topic vocabulary):
     - kill_criteria == "unspecified — needs sparring": persistent flag
-    - kill_criteria phrase match against signals (≥2 distinctive words from
-      same phrase must co-occur in the signal — not just any single word)
+    - kill_criteria phrase match against signals (distinctive words from
+      the same phrase must co-occur in the signal — see _phrase_match for
+      the v0.3 stop-list rule that filters generic product nouns)
     - signal contradiction vs the bet's `## The bet` text (marker must appear
       in the signal, ≥3 shared ≥6-char words within proximity of the marker)
     - staleness: today - last_reviewed > horizon threshold
@@ -193,22 +194,108 @@ def _format_kill_criteria(text: str) -> str:
     return text[:_KILL_CRITERIA_NOTE_CAP].rstrip() + "…"
 
 
+# Issue #37: common product nouns and expanded acronyms that look "distinctive"
+# by length alone (>=5 chars) but are actually generic vocabulary in any
+# engineering / commit-message corpus. A kill_criterion that contains only one
+# of these as its sole "distinctive" token is too weak to fire a conflict —
+# substring matches will trip on routine signals (e.g. "Claude" inside a
+# `Co-Authored-By: Claude Sonnet 4.6` trailer; "AIF" inside an `aif_operations/`
+# file path). Kept as a module constant deliberately; future PR may make it
+# config-driven.
+_GENERIC_NOUNS: frozenset[str] = frozenset(
+    {
+        # Vendor / product nouns flagged in issue #37.
+        "claude",
+        "gpt",
+        "linear",
+        "github",
+        "gitlab",
+        "slack",
+        "notion",
+        "obsidian",
+        "anthropic",
+        "openai",
+        "google",
+        "microsoft",
+        # Internal / acronym tokens flagged in issue #37 (case-folded).
+        "aif",
+        "cns",
+        "otel",
+        # Generic engineering nouns that show up in nearly every diff / commit.
+        "dispatch",
+        "engine",
+        "system",
+        "metrics",
+        "signal",
+        "report",
+        "provider",
+        "service",
+        "client",
+        "server",
+        "daemon",
+        "runner",
+        "worker",
+        "module",
+        "package",
+        "feature",
+    }
+)
+
+
+def _tokenize_phrase(phrase: str) -> list[str]:
+    """Return lowercased word tokens from a phrase, with punctuation stripped.
+
+    Used by _phrase_match to extract candidate tokens for distinctiveness
+    filtering.
+    """
+    out: list[str] = []
+    for raw in phrase.split():
+        tok = raw.lower().strip(".,;:!?\"'()[]{}<>")
+        if tok:
+            out.append(tok)
+    return out
+
+
 def _phrase_match(needle_text: str, haystack: str) -> bool:
-    """v0.2 phrase-level match for kill_criteria vs signals.
+    """v0.3 phrase-level match for kill_criteria vs signals (issue #37).
 
     Tokenize needle into phrases (split on ';' / ','). Within each phrase,
-    extract distinctive words (length >= 5). A match fires if at least TWO
-    distinctive words from the SAME phrase co-occur in the haystack within
-    a 150-char window — proximity anchors the match to a specific scenario
-    the kill_criterion is describing, not arbitrary topic overlap.
+    extract DISTINCTIVE tokens — length >= 5 AND not in the _GENERIC_NOUNS
+    stop-list. The stop-list rejects common product nouns and expanded
+    acronyms ("Claude", "AIF", "dispatch", …) that look distinctive by
+    length alone but trip on routine engineering content.
+
+    A match fires when:
+      - A phrase has >= 2 distinctive tokens AND >= 2 of them co-occur in
+        the haystack within a 150-char window — proximity anchors the
+        match to a specific scenario, not arbitrary topic overlap.
+      - A phrase has exactly 1 distinctive token (already not in the
+        stop-list) AND that token appears in the haystack. Single
+        non-generic tokens like "logfire" or "tau-bench" are still
+        strong enough to fire on their own.
+      - A phrase with 0 distinctive tokens never matches: it carries
+        only generic / short vocabulary and cannot disambiguate
+        between this kill_criterion and unrelated signals.
+
+    Haystack matching is case-insensitive: callers usually pass already-
+    lowercased text, but the function lowercases defensively so it is
+    correct under any caller.
     """
+    haystack_lc = haystack.lower()
     phrases = [p.strip() for p in needle_text.replace(",", ";").split(";")]
     for phrase in phrases:
-        words = [w for w in phrase.split() if len(w) >= 5]
-        if len(words) < 2:
+        tokens = _tokenize_phrase(phrase)
+        distinctive = [t for t in tokens if len(t) >= 5 and t not in _GENERIC_NOUNS]
+        if not distinctive:
             continue
-        hits_idxs = [haystack.find(w) for w in words]
-        present = [(w, i) for w, i in zip(words, hits_idxs, strict=True) if i >= 0]
+        if len(distinctive) == 1:
+            tok = distinctive[0]
+            if tok in haystack_lc:
+                return True
+            continue
+        # >= 2 distinctive tokens: require >= 2 in haystack within 150 chars.
+        hits = [(t, haystack_lc.find(t)) for t in distinctive]
+        present = [(t, i) for t, i in hits if i >= 0]
         if len(present) < 2:
             continue
         present.sort(key=lambda x: x[1])
