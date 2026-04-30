@@ -133,6 +133,14 @@ own subordinates inline by shelling out to `cns execute --from-leader <self>
 that needs to delegate a piece of work to an engineer-agent can do so
 without bouncing back to the CEO.
 
+> **Requires `execution.reviews_dir_per_leader: true`** (issue #33). Sub-dispatch
+> routes the sub-agent's brief into `<reviews_dir>/<parent_leader_id>/<sub-slug>/`,
+> which is only consistent when the rest of the vault uses the per-leader layout.
+> Calling `cns execute --from-leader …` against a vault with the flag off exits
+> non-zero and tells the user to set `execution.reviews_dir_per_leader: true` in
+> `.cns/config.yaml` and run `cns vault migrate-reviews --apply`. Flip the flag
+> once when you start using recursion, then leave it on.
+
 ### Contract
 
 A leader-agent that wants to sub-delegate:
@@ -170,6 +178,8 @@ A leader-agent that wants to sub-delegate:
 
 The CLI exits non-zero (and the leader-agent's shell-out fails) on any of:
 
+- `reviews_dir_per_leader` is false — see the requirement note above. The
+  CLI tells the user which knob to flip and to run `cns vault migrate-reviews`.
 - `role_not_subordinate` — sub-bet owner does not directly report to the
   calling leader. Likely a typo'd `owner` field or the wrong leader id.
 - `depth_limit` — the dispatch chain would exceed

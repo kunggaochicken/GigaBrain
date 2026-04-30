@@ -794,7 +794,10 @@ def _three_level_vault(tmp_path):
         "horizons:\n  this-week: 7\n  this-month: 30\n"
         "  this-quarter: 90\n  strategic: 180\n"
         "signal_sources: []\n"
+        # `reviews_dir_per_leader: true` is required for sub-dispatch since
+        # issue #33 — recursion routes briefs into per-leader subdirs.
         "execution:\n  reviews_dir: Brain/Reviews\n  top_level_leader: ceo\n"
+        "  reviews_dir_per_leader: true\n"
     )
     return vault, runner
 
@@ -959,6 +962,46 @@ def test_cli_execute_from_leader_requires_bet(tmp_path):
     )
     assert r.exit_code != 0
     assert "--bet" in r.output
+
+
+def test_cli_execute_from_leader_refuses_when_per_leader_flag_off(tmp_path):
+    """Issue #33: a sub-dispatch CLI invocation must refuse with a
+    user-friendly error when `execution.reviews_dir_per_leader` is false.
+    The message has to point at the migration command so the user can
+    self-serve the fix from `/execute`'s output."""
+    vault, runner = _three_level_vault(tmp_path)
+    # Strip the per-leader flag — simulate a vault that opted into
+    # recursion in config but never flipped the layout flag.
+    cfg_path = vault / ".cns/config.yaml"
+    cfg_path.write_text(cfg_path.read_text().replace("  reviews_dir_per_leader: true\n", ""))
+
+    create_bet(
+        bets_dir=vault / "Brain/Bets",
+        name="Fix JWT bug",
+        description="x",
+        owner="engineer",
+        horizon="this-week",
+        confidence="low",
+        kill_criteria="x",
+        body_the_bet="x",
+        today=date(2026, 4, 26),
+    )
+    r = runner.invoke(
+        cli,
+        [
+            "execute",
+            "--vault",
+            str(vault),
+            "--from-leader",
+            "cto",
+            "--bet",
+            "fix_jwt_bug",
+        ],
+    )
+    assert r.exit_code != 0
+    # The user must be told the knob to flip and the migration command.
+    assert "reviews_dir_per_leader" in r.output
+    assert "cns vault migrate-reviews" in r.output
 
 
 def test_cli_execute_from_leader_dry_run_writes_nothing(tmp_path):
