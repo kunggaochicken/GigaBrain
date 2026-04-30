@@ -61,6 +61,44 @@ class RelatedBetsSnapshot(BaseModel):
     same_topic_historical: list[str] = Field(default_factory=list)
 
 
+class TicketAttempt(BaseModel):
+    """One failed approach the agent tried while working a ticket.
+
+    Captured per-ticket so future briefs against the same ticket carry the
+    history forward — preventing a sub-agent from repeating an approach the
+    parent already disproved. Lands in MVP because it's cheap to add to the
+    envelope contract up front and expensive to retrofit (every accepted
+    brief written without it loses that history permanently).
+    """
+
+    ticket_id: str  # Linear ticket id (or stub id), e.g. "GIG-42"
+    approach: str  # one-line summary of what was tried
+    why_failed: str | None = None  # optional one-line cause
+
+
+class LinearTicketsRollup(BaseModel):
+    """Per-bet ticket counts for the brief's `## TL;DR for the CEO` rollup.
+
+    Counts what's open / stalled / closed for THIS bet's tickets at brief
+    time. The CEO reads the rollup; they only drill into Linear when a
+    number looks wrong (e.g. tickets sitting stalled too long).
+
+    `total` is computed lazily from the three buckets so the model stays
+    in sync if a serializer drops a field. `attempts` is per-ticket and
+    lives in its own list to keep the rollup numeric and trivially
+    aggregatable across briefs.
+    """
+
+    open: int = 0
+    stalled: int = 0
+    closed: int = 0
+    attempts: list[TicketAttempt] = Field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return self.open + self.stalled + self.closed
+
+
 class CostRecord(BaseModel):
     """Token usage and dollar cost for one agent run.
 
@@ -106,6 +144,10 @@ class Brief(BaseModel):
     files_touched: list[FileTouched] = Field(default_factory=list)
     verification: list[VerificationResult] = Field(default_factory=list)
     cost: CostRecord | None = None
+    # Per-bet Linear ticket rollup (issue: cns_linear_layer_v1). Empty in
+    # MVP runs that don't yet spawn tickets; schema lands now so future
+    # briefs can populate without retrofitting existing entries.
+    linear_tickets: LinearTicketsRollup = Field(default_factory=LinearTicketsRollup)
 
     # Body sections (parsed from H2 markdown headers)
     body_tldr: str | None = None
