@@ -221,10 +221,11 @@ Error model:
 - **Buttons (mirror `/spar` Phase 2):**
   - `[Accept]` — icon `check-circle` — runs `cns reviews accept <slug>`. Short op (filesystem move). On success, brief moves to `.archive/`; the post-processor's host file disappears, which Obsidian handles by closing the leaf.
   - `[Reject]` — icon `x-circle` — runs `cns reviews reject <slug>`. Short op.
-  - `[Edit-and-rerun]` — icon `refresh-cw` — opens a small modal with a textarea ("Reviewer notes"), then on submit runs the skill `/execute` with `--bet <slug> --all` after appending the notes to the brief. Long op, modal log.
+  - `[Edit-and-rerun]` — icon `refresh-cw` — opens a small modal with a textarea ("Reviewer notes"), then on submit runs the skill `/execute --bet <slug> --all --reviewer-notes <notes>` (needs `/execute --reviewer-notes` flag — tracked separately). The skill is responsible for whatever recording or feed-forward happens with those notes; the plugin never writes to `brief.md`. Long op, modal log.
   - `[View files]` — icon `folder-open` — opens the sibling `files/` directory's contents in a new Obsidian split (uses `app.workspace.openLinkText` for each file). Instant; no CLI call.
 - **Async behavior:** Accept/Reject as Notice; Edit-and-rerun as modal.
 - **Error surface:** as above; if `cns reviews accept` fails (e.g. workspace path missing), surface stderr and leave the brief in place.
+- **Invariant note:** by passing reviewer notes through the skill (stdin/argv) rather than mutating `brief.md` from the plugin, this design preserves §1.2 invariant 2 — the plugin remains a thin shell over CLI/skill calls and never becomes a second write path for review artifacts.
 
 ### 3.3 `CONFLICTS.md` (`processors/conflictsActions.ts`)
 
