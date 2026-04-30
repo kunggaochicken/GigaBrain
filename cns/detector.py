@@ -95,7 +95,7 @@ def detect_conflicts(
                             owner=bet.owner,
                             today=today,
                             trigger=f"Signal {sig.source} matches kill_criteria of '{bet.name}'.",
-                            note=f"Kill criteria: {bet.kill_criteria[:120]}",
+                            note=f"Kill criteria: {_format_kill_criteria(bet.kill_criteria)}",
                         )
                     )
                     break
@@ -171,6 +171,26 @@ def _slug_from_filename(path: str) -> str:
     if stem.startswith("bet_"):
         stem = stem[4:]
     return stem.replace("_", "-")
+
+
+# Soft cap for kill_criteria text rendered into CONFLICTS.md detector notes.
+# Kept generous so multi-clause OR-shaped criteria render in full; the bet is
+# linked via [[bet_<slug>]] for the rare case where the full text is longer.
+_KILL_CRITERIA_NOTE_CAP = 240
+
+
+def _format_kill_criteria(text: str) -> str:
+    """Render kill_criteria for a detector note.
+
+    Issue #35: the previous hard 120-char slice cut mid-word with no ellipsis
+    (e.g. "...another tool/vendor claims th"). Bets in active use have
+    multi-clause OR-shaped kill_criteria that fit comfortably in 240 chars.
+    Above the cap, trim trailing whitespace and append a single ellipsis so
+    the truncation is honest at-a-glance.
+    """
+    if len(text) <= _KILL_CRITERIA_NOTE_CAP:
+        return text
+    return text[:_KILL_CRITERIA_NOTE_CAP].rstrip() + "…"
 
 
 def _phrase_match(needle_text: str, haystack: str) -> bool:
