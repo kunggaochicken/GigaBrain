@@ -267,9 +267,11 @@ And these H2 sections in this order:
 def _build_web_tools_section(*, role: RoleSpec, review_dir: Path) -> str:
     """Render the system-prompt section describing web access for this role.
 
-    v0.2 ships prompt-enforcement only (see issue #20), so the dispatched
-    agent reads these instructions and refuses to fetch outside the allowlist.
-    A pre-tool-use hook that enforces the same rules will land later.
+    Belt-and-suspenders: v0.3 ships a PreToolUse hook executor (#30) that
+    machine-enforces this allowlist. The system-prompt instructions still
+    fire because the hook is opt-in (the user installs the snippet from
+    `templates/claude-settings.hook.json.template`); when the hook isn't
+    installed the prompt is the only line of defense.
 
     The returned string always ends with a single trailing blank line so it
     composes cleanly with the section that follows.

@@ -4,19 +4,29 @@ All notable changes to GigaBrain CNS are documented here. The project follows [S
 
 ## Unreleased
 
-### Added — unified `/cns` walk (issue #36)
-- The `/cns` skill is now a unified walk: detect bet edits since last index,
-  reindex if stale, run `/cns-detect`, chain into `/spar`. Collapses the old
-  three-context-switch flow (Obsidian -> terminal `cns reindex` + `cns detect`
-  -> Claude Code `/spar`) into a single Claude Code invocation. Aligns with
-  CLAUDE.md's "single console / no workspace hopping" principle.
-- New CLI flag: `cns reindex --check` — freshness probe that exits 0 if the
-  bets index is newer than every `bet_*.md`, exits 1 otherwise. Prints a
-  `fresh:` or `stale: ...` summary line. Used by `/cns` to skip reindexing
-  when nothing has changed (and to surface *why* a reindex is happening when
-  it does).
-- `/cns` chains to `/cns-detect` and `/spar` rather than reimplementing them,
-  so each sub-skill remains independently usable.
+### Added — PreToolUse hook executor (issue #30)
+- New CLI entry point `cns-hook-pretooluse` (and `python -m cns.hook_executor`):
+  a Claude Code PreToolUse hook that reads the per-bet descriptor at
+  `.cns/.agent-hooks/<slug>.json` and emits an allow/deny verdict for the
+  tool call piped to its stdin.
+- Enforcement matrix: `Edit`/`Write`/`MultiEdit`/`NotebookEdit` outside the
+  staging dir → deny; `WebFetch` to a host not in `tools.web_allowlist` →
+  deny; `WebFetch` when `tools.web: false` → deny; `WebSearch` when
+  `tools.web: false` → deny; `Bash` commands not matching
+  `tools.bash_allowlist` → deny. Read-style tools (Read/Glob/Grep) pass
+  through.
+- Active-bet resolution at hook time, in priority order: `$CNS_ACTIVE_BET`
+  env var (paired with `$CNS_VAULT_ROOT`) → sentinel file at
+  `<vault>/.cns/.agent-hooks/.active` → single-descriptor auto-detect →
+  open mode (no enforcement). Open mode means the hook is safe to install
+  globally — it only kicks in during an `/execute` run.
+- New `cns hook-active set <slug>` / `cns hook-active clear` CLI commands
+  for the `/execute` skill to manage the sentinel across each per-bet
+  Agent invocation.
+- New install template `templates/claude-settings.hook.json.template` and
+  walkthrough `docs/installing-hook-executor.md`.
+- `skills/execute/SKILL.md` updated: the v0.2 prompt-enforcement-only
+  stanza is replaced with v0.3 hook-enforcement instructions.
 
 ## v0.4.0 (2026-04-26)
 
