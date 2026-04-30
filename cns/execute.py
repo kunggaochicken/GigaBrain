@@ -468,6 +468,9 @@ def build_agent_envelope(
         f"Your staging directory: {review_dir}\n"
         f"Stage every file you touch under {review_dir}/files/ mirroring its "
         f"absolute or vault-relative path (leading `/` stripped).\n\n"
+        f"Out-of-scope finding: tactical -> `cns ticket spawn`. Strategic -> "
+        f"write a candidate-bet to Brain/Bets/_candidates/. Never carry it "
+        f"in your head.\n\n"
         f"{web_section}"
         f"{_BRIEF_SCHEMA_INSTRUCTIONS}"
     )

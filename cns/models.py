@@ -36,6 +36,15 @@ class Bet(BaseModel):
     kill_criteria: str  # required; "unspecified — needs sparring" is a valid value
     deferred_until: date | None = None
 
+    # Generic ticket-tracker reference for this bet (Linear Project / Jira Epic /
+    # GitHub Project). Format is `<kind>:<id>` to keep parity across providers
+    # (e.g. "linear:abc123", "github:owner/repo#42") — the Linear MVP only
+    # populates `linear:<project_id>`, but the schema is provider-agnostic so
+    # later integrations don't force a frontmatter migration. None means "no
+    # epic linked yet"; CNS's `cns ticket spawn` uses this to scope
+    # ticket-as-fork persistence under the right project.
+    epic_ref: str | None = None
+
     # Body fields parsed from the markdown sections (filled by bet.py, not in YAML)
     body_the_bet: str | None = None
     body_why: str | None = None
@@ -138,10 +147,14 @@ def _path_contains(outer, inner) -> bool:
 
 
 class SignalSource(BaseModel):
-    kind: Literal["vault_dir", "git_commits", "github_prs"]
+    kind: Literal["vault_dir", "git_commits", "github_prs", "linear_tickets"]
     path: str | None = None
     repos: list[str] | None = None
     auth: str | None = None
+    # `linear_tickets` only: optional override of the stub JSON path. Defaults
+    # to ~/.cns/linear_stub.json when omitted. The future MCP-backed reader
+    # will ignore this field; left in for the MVP plumbing only.
+    stub_path: str | None = None
 
 
 class DetectionConfig(BaseModel):

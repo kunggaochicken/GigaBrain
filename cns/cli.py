@@ -36,6 +36,12 @@ from cns.reviews import (
 )
 from cns.roles import RoleTreeError, find_root_role
 from cns.signals import GitCommitsSignal, GitHubPRsSignal, VaultDirSignal
+from cns.signals_linear import (
+    LinearTicket,
+    LinearTicketsSignal,
+    default_stub_path,
+    write_stub_ticket,
+)
 
 
 def _load_vault(vault: Path | None):
@@ -58,6 +64,9 @@ def _build_signal_sources(cfg):
             out.append(GitCommitsSignal(repos=s.repos or []))
         elif s.kind == "github_prs":
             out.append(GitHubPRsSignal(repos=s.repos or [], auth=s.auth or "gh_cli"))
+        elif s.kind == "linear_tickets":
+            stub = Path(s.stub_path).expanduser() if s.stub_path else None
+            out.append(LinearTicketsSignal(stub_path=stub))
     return out
 
 
@@ -916,3 +925,129 @@ def vault_migrate_reviews(vault, apply, undo, leader_id):
             "Tip: set `execution.reviews_dir_per_leader: true` in .cns/config.yaml "
             "to make /spar and /execute use the new layout."
         )
+
+
+# ---------------------------------------------------------------------------
+# Ticket persistence (issue: cns_linear_layer_v1).
+#
+# Mid-session, a role-agent that surfaces an out-of-scope tactical finding
+# can call `cns ticket spawn` to make the fork durable BEFORE the session
+# context dies. Today this writes to a local JSON stub at
+# ~/.cns/linear_stub.json; the V1 swap to a real Linear API call is
+# documented as a TODO and confined to `cns/signals_linear.py` plus this
+# command — no other call site reads the stub format.
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def ticket():
+    """Persist agent forks as tickets (Linear-shaped, stub-backed in MVP)."""
+
+
+@ticket.command("spawn")
+@click.option(
+    "--parent",
+    "parent_epic",
+    required=True,
+    help="Parent epic / bet slug (e.g. 'cns_linear_layer_v1').",
+)
+@click.option("--title", required=True, help="One-line ticket title.")
+@click.option(
+    "--description",
+    "description",
+    default="",
+    help="Long-form ticket body. Optional.",
+)
+@click.option(
+    "--owner",
+    "owner",
+    default=None,
+    help="Role id this ticket is assigned to. Optional.",
+)
+@click.option(
+    "--ticket-id",
+    "ticket_id",
+    default=None,
+    help=(
+        "Override the auto-generated id. Mostly for tests. In production "
+        "the stub generates `STUB-N`; the future Linear backend will "
+        "replace this with the real Linear-issued id."
+    ),
+)
+@click.option(
+    "--stub-path",
+    "stub_path_str",
+    default=None,
+    help=(
+        "Override the stub file location. Defaults to ~/.cns/linear_stub.json. "
+        "TODO(v1): swap this for a real Linear API call — no other call site "
+        "reads the stub format, so the migration is confined to this command "
+        "and `cns/signals_linear.py`."
+    ),
+)
+def ticket_spawn(parent_epic, title, description, owner, ticket_id, stub_path_str):
+    """Create a durable ticket under a parent epic / bet.
+
+    Mid-session use: when a role-agent notices an out-of-scope tactical
+    finding ("noticed X while doing Y"), it calls this command so the
+    fork survives session context death. Strategic forks go to a
+    candidate-bet markdown instead — see Brain/Bets/_candidates/.
+    """
+    from datetime import UTC, datetime
+
+    stub_path = Path(stub_path_str).expanduser() if stub_path_str else default_stub_path()
+
+    # Allocate a deterministic id when caller didn't supply one. We scan the
+    # stub for the highest existing STUB-N and add 1; deterministic for tests
+    # and trivially diffable in git when the stub is checked in for a vault.
+    if ticket_id is None:
+        ticket_id = _next_stub_ticket_id(stub_path)
+
+    label = f"bet:{parent_epic}"
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ticket_obj = LinearTicket(
+        id=ticket_id,
+        title=title,
+        description=description,
+        status="open",
+        bet_label=label,
+        owner=owner,
+        updated_at=now_iso,
+    )
+    write_stub_ticket(stub_path=stub_path, ticket=ticket_obj)
+    click.echo(f"Spawned {ticket_id} under {label}: {title}")
+    click.echo(f"  stub: {stub_path}")
+
+
+def _next_stub_ticket_id(stub_path: Path) -> str:
+    """Compute the next `STUB-N` id by scanning existing stub entries.
+
+    Defensive: any malformed/missing stub yields STUB-1. We deliberately
+    avoid touching disk twice (read in command, then again here) — the
+    JSON parse cost is negligible for the MVP scale.
+    """
+    import json as _json
+    import re as _re
+
+    if not stub_path.exists():
+        return "STUB-1"
+    try:
+        raw = _json.loads(stub_path.read_text(encoding="utf-8"))
+    except (_json.JSONDecodeError, OSError):
+        return "STUB-1"
+    if not isinstance(raw, dict):
+        return "STUB-1"
+    tickets = raw.get("tickets") or []
+    if not isinstance(tickets, list):
+        return "STUB-1"
+    highest = 0
+    for t in tickets:
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("id")
+        if not isinstance(tid, str):
+            continue
+        m = _re.match(r"^STUB-(\d+)$", tid)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return f"STUB-{highest + 1}"
