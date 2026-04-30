@@ -22,11 +22,25 @@ export interface GigaBrainSettings {
   cnsBinaryPath: string;
   /** Verbose console logging for plugin diagnostics. */
   debugLogging: boolean;
+
+  // ---- Vault layout (consumed by vaultState.scan) ----
+  /** Vault-relative directory containing per-bet review queues. */
+  reviewsDir: string;
+  /** Vault-relative path to the conflicts file. */
+  conflictsFile: string;
+  /** Vault-relative directory containing `bet_*.md` files. */
+  betsDir: string;
+  /** A bet is "stale" when `last_reviewed` is older than this many days. */
+  staleAfterDays: number;
 }
 
 export const DEFAULT_SETTINGS: GigaBrainSettings = {
   cnsBinaryPath: "",
   debugLogging: false,
+  reviewsDir: "Brain/Reviews",
+  conflictsFile: "Brain/CONFLICTS.md",
+  betsDir: "Brain/Bets",
+  staleAfterDays: 30,
 };
 
 /**
@@ -65,6 +79,7 @@ export class GigaBrainSettingTab extends PluginSettingTab {
 
     this.renderVaultPath(containerEl);
     this.renderBinaryPath(containerEl);
+    this.renderVaultLayout(containerEl);
     this.renderDebugToggle(containerEl);
   }
 
@@ -140,6 +155,72 @@ export class GigaBrainSettingTab extends PluginSettingTab {
     };
 
     void refreshStatus();
+  }
+
+  private renderVaultLayout(containerEl: HTMLElement): void {
+    containerEl.createEl("h3", { text: "Vault layout" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text:
+        "Where the plugin looks for bets, briefs, and conflicts. Defaults match the cns CLI's `Brain/` layout.",
+    });
+
+    new Setting(containerEl)
+      .setName("Bets directory")
+      .setDesc("Vault-relative directory containing bet_*.md files.")
+      .addText((text) =>
+        text
+          .setPlaceholder("Brain/Bets")
+          .setValue(this.plugin.settings.betsDir)
+          .onChange(async (value) => {
+            this.plugin.settings.betsDir = value.trim() || "Brain/Bets";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Reviews directory")
+      .setDesc("Vault-relative directory containing per-bet review queues.")
+      .addText((text) =>
+        text
+          .setPlaceholder("Brain/Reviews")
+          .setValue(this.plugin.settings.reviewsDir)
+          .onChange(async (value) => {
+            this.plugin.settings.reviewsDir = value.trim() || "Brain/Reviews";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Conflicts file")
+      .setDesc("Vault-relative path to the conflicts file.")
+      .addText((text) =>
+        text
+          .setPlaceholder("Brain/CONFLICTS.md")
+          .setValue(this.plugin.settings.conflictsFile)
+          .onChange(async (value) => {
+            this.plugin.settings.conflictsFile =
+              value.trim() || "Brain/CONFLICTS.md";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Stale after (days)")
+      .setDesc(
+        "A bet is flagged stale if last_reviewed is older than this many days. Default 30.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("30")
+          .setValue(String(this.plugin.settings.staleAfterDays))
+          .onChange(async (value) => {
+            const n = Number.parseInt(value, 10);
+            this.plugin.settings.staleAfterDays =
+              Number.isFinite(n) && n > 0 ? n : 30;
+            await this.plugin.saveSettings();
+          }),
+      );
   }
 
   private renderDebugToggle(containerEl: HTMLElement): void {
