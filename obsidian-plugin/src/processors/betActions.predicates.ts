@@ -54,6 +54,24 @@ export function isUnderBetsDir(sourcePath: string, betsDir: string): boolean {
 }
 
 /**
+ * Decide whether *this* rendered section is the one that should host the
+ * action bar. `registerMarkdownPostProcessor` runs once per rendered preview
+ * section; without a guard, notes that render into multiple sections get a
+ * duplicate bar in each section.
+ *
+ * Strategy: only the section anchored at the file's first line
+ * (`lineStart === 0`) gets the bar. Subsequent sections short-circuit. If
+ * `getSectionInfo` returns null (transient render state, embeds, etc.), we
+ * also skip — better to miss one render than to duplicate the bar.
+ */
+export function isFirstSection(
+  info: { lineStart: number } | null | undefined,
+): boolean {
+  if (!info) return false;
+  return info.lineStart === 0;
+}
+
+/**
  * Wrap `gray-matter` with a try/catch that returns null on parse failure
  * and emits a console.warn. Per architecture §7.4, parse errors are
  * console-only — no user-facing chrome.

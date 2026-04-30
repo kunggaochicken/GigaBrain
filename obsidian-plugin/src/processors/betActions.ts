@@ -29,6 +29,7 @@ import { runSkill } from "../bridge/claudeCode";
 import { RunSkillModal } from "../views/modal";
 import {
   deriveSlug,
+  isFirstSection,
   isUnderBetsDir,
   shouldInjectBar,
 } from "./betActions.predicates";
@@ -72,6 +73,11 @@ export async function betActionBar(
 
   const betsDir = resolveBetsDir(plugin);
   if (!isUnderBetsDir(sourcePath, betsDir)) return;
+
+  // The post-processor runs once per rendered preview section. Without this
+  // guard, notes that render into multiple sections inject a bar in each
+  // one. Only the section at the top of the file (lineStart 0) gets the bar.
+  if (!isFirstSection(ctx.getSectionInfo(el))) return;
 
   const file = plugin.app.vault.getAbstractFileByPath(sourcePath);
   if (!(file instanceof TFile)) return;

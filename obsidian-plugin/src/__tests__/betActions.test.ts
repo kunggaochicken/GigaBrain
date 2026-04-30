@@ -10,6 +10,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import {
   deriveSlug,
+  isFirstSection,
   shouldInjectBar,
 } from "../processors/betActions.predicates";
 
@@ -170,5 +171,25 @@ body
         "Brain/Bets/",
       ),
     ).toBe(true);
+  });
+});
+
+describe("isFirstSection", () => {
+  // The post-processor runs once per rendered preview section. The bar
+  // belongs only on the section anchored at the file's first line; every
+  // other section short-circuits. This pins the predicate that drives that
+  // decision (PR #56 review: "inject the action bar only once per note").
+  it("returns true when the section starts at the top of the file", () => {
+    expect(isFirstSection({ lineStart: 0 })).toBe(true);
+  });
+
+  it("returns false for any later section", () => {
+    expect(isFirstSection({ lineStart: 5 })).toBe(false);
+    expect(isFirstSection({ lineStart: 1 })).toBe(false);
+  });
+
+  it("returns false when the section info is null or undefined", () => {
+    expect(isFirstSection(null)).toBe(false);
+    expect(isFirstSection(undefined)).toBe(false);
   });
 });
