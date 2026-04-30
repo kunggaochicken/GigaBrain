@@ -31,6 +31,12 @@ export class RunSkillModal extends Modal {
   private logEl: HTMLElement | null = null;
   private footerEl: HTMLElement | null = null;
   private stopBtn: HTMLButtonElement | null = null;
+  // Flipped true in `onClose()`. Gates `appendLine`/`markDone` and breaks the
+  // `consume()` loop so a closed modal does not keep buffering output into a
+  // detached `logEl` for the lifetime of the (still-running) child process.
+  // Per the bridge contract (bridge/claudeCode.ts), draining the iterable is
+  // not required for clean child exit — `child.kill` is the only abort path.
+  private closed = false;
 
   constructor(app: App, title: string, factory: StreamFactory) {
     super(app);
@@ -76,6 +82,12 @@ export class RunSkillModal extends Modal {
 
   onClose(): void {
     // Note: we deliberately do not abort here. Long ops keep running.
+    // Flag the modal as closed so the in-flight `consume()` loop stops
+    // writing into the now-detached log element.
+    this.closed = true;
+    this.logEl = null;
+    this.footerEl = null;
+    this.stopBtn = null;
     this.contentEl.empty();
   }
 
@@ -83,6 +95,10 @@ export class RunSkillModal extends Modal {
     const iter = this.factory(this.controller.signal);
     try {
       for await (const chunk of iter) {
+        // The modal was closed mid-stream. Stop pulling from the iterator;
+        // the underlying spawn keeps running (closing is non-aborting), but
+        // we no longer accumulate its output in memory.
+        if (this.closed) return;
         if ("done" in chunk && chunk.done) {
           this.markDone(chunk.exitCode);
           return;
@@ -101,7 +117,7 @@ export class RunSkillModal extends Modal {
   }
 
   private appendLine(stream: "stdout" | "stderr", line: string): void {
-    if (!this.logEl) return;
+    if (this.closed || !this.logEl) return;
     const span = this.logEl.createSpan({
       cls: stream === "stderr" ? "stderr" : "stdout",
     });
@@ -110,6 +126,7 @@ export class RunSkillModal extends Modal {
   }
 
   private markDone(exitCode: number): void {
+    if (this.closed) return;
     if (this.footerEl) {
       this.footerEl.setText(`Exit code: ${exitCode}`);
     }
