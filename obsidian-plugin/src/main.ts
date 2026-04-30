@@ -22,6 +22,7 @@ import {
 import { discoverBinary, probeVersion } from "./cnsRunner";
 import { scan, ScanOptions, VaultState } from "./vaultState";
 import { GigaBrainSidebar, SIDEBAR_VIEW_TYPE } from "./views/sidebar";
+import { betActionBar } from "./processors/betActions";
 
 /** Vault event debounce (per architecture §2.3). */
 const SCAN_DEBOUNCE_MS = 500;
@@ -67,6 +68,15 @@ export default class GigaBrainPlugin extends Plugin {
 
     // Initial scan after settings load. Don't block onload on it.
     this.scheduleScan(0);
+
+    // --- bet action bar wiring (GIG-99) ---
+    // Inject [Dispatch] / [Spar] / [Open bet] above bet_*.md files in
+    // reading mode. The processor itself does the trigger checks (path
+    // shape + frontmatter status). Architecture §3.1.
+    this.registerMarkdownPostProcessor((el, ctx) => {
+      void betActionBar(el, ctx, this);
+    });
+    // --- end bet action bar wiring ---
   }
 
   onunload(): void {
