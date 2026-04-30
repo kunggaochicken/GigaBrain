@@ -18,6 +18,7 @@ from cns.detector import detect_conflicts
 from cns.execute import (
     DispatchSkipReason,
     NoExecutionConfigError,
+    SubDispatchRequiresPerLeaderError,
     annotate_with_estimates_and_budgets,
     build_agent_envelope,
     build_dispatch_queue,
@@ -529,6 +530,8 @@ def _execute_subordinate(
         raise click.ClickException(
             f"{e}. Run `cns execute init` to scaffold execution config."
         ) from e
+    except SubDispatchRequiresPerLeaderError as e:
+        raise click.ClickException(str(e)) from e
     except FileNotFoundError as e:
         raise click.ClickException(str(e)) from e
 

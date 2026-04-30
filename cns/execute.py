@@ -40,6 +40,20 @@ class NoExecutionConfigError(RuntimeError):
     """Raised when /execute is invoked but `execution` block is missing."""
 
 
+class SubDispatchRequiresPerLeaderError(RuntimeError):
+    """Raised when `dispatch_subordinate` is called while
+    `execution.reviews_dir_per_leader` is false.
+
+    Recursive sub-dispatch routes a sub-agent's brief into its parent
+    leader's queue at `<reviews_dir>/<parent_leader_id>/<sub-bet-slug>/`.
+    That layout is only meaningful when the per-leader flag is on; when
+    it is off, top-level briefs sit at `<reviews_dir>/<bet-slug>/`, and
+    quietly nesting sub-briefs under a leader id would silently opt the
+    vault into a half-and-half layout the rest of the codebase doesn't
+    expect. See issue #33.
+    """
+
+
 class DispatchSkipReason(StrEnum):
     PENDING_REVIEW = "pending_review"
     NO_WORKSPACES = "no_workspaces"
@@ -432,10 +446,12 @@ def build_agent_envelope(
         raise NoExecutionConfigError("no execution config — run `cns execute init` first")
 
     if parent_leader_id is not None:
-        # Recursive sub-dispatch: force the sub-agent's brief into the
-        # parent leader's subdir even if the per-leader flag is off, so
-        # `Brain/Reviews/<cto>/<engineer_bet>/` doesn't collide with a
-        # sibling top-level bet of the same slug.
+        # Recursive sub-dispatch: route the sub-agent's brief into the
+        # parent leader's subdir at
+        # `<reviews_dir>/<parent_leader_id>/<sub-bet-slug>/`. The caller
+        # (`dispatch_subordinate`) has already enforced
+        # `execution.reviews_dir_per_leader == true` (issue #33), so this
+        # nested layout is consistent with the rest of the vault.
         review_dir = vault_root / cfg.execution.reviews_dir / parent_leader_id / item.bet_slug
     else:
         review_dir = reviews_root(cfg, vault_root) / item.bet_slug
@@ -586,6 +602,21 @@ def dispatch_subordinate(
     """
     if cfg.execution is None:
         raise NoExecutionConfigError("no execution config — run `cns execute init` first")
+
+    # Sub-dispatch routes the sub-agent's brief into the parent leader's
+    # subdir (`<reviews_dir>/<parent_leader_id>/<slug>/`). That layout is
+    # only sound when the rest of the vault uses the per-leader layout
+    # too. Refuse loudly if the flag is off so the user makes an
+    # explicit choice (and migrates existing top-level briefs). Issue #33.
+    if not cfg.execution.reviews_dir_per_leader:
+        raise SubDispatchRequiresPerLeaderError(
+            "Sub-dispatch requires the per-leader review layout, but "
+            "`execution.reviews_dir_per_leader` is false. To enable recursive "
+            "sub-delegation: set `execution.reviews_dir_per_leader: true` in "
+            ".cns/config.yaml, then run `cns vault migrate-reviews --apply` to "
+            "move existing top-level briefs into "
+            "`<reviews_dir>/<top_level_leader>/`. See issue #33."
+        )
 
     bets_dir = vault_root / cfg.brain.bets_dir
     bet_path = bets_dir / f"bet_{sub_bet_slug}.md"

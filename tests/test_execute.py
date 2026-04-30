@@ -10,6 +10,7 @@ import pytest
 from cns.execute import (
     DispatchSkipReason,
     NoExecutionConfigError,
+    SubDispatchRequiresPerLeaderError,
     annotate_with_estimates_and_budgets,
     build_agent_envelope,
     build_dispatch_queue,
@@ -717,7 +718,10 @@ def _recursive_roles() -> list[RoleSpec]:
 def test_subordinate_dispatch_routes_brief_to_parent_leader_subdir(tmp_path):
     """Canonical CTO -> engineer flow: the engineer's brief lands in
     Brain/Reviews/cto/<slug>/, NOT Brain/Reviews/<slug>/."""
-    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "fix_jwt", "engineer")
 
@@ -740,7 +744,10 @@ def test_subordinate_dispatch_routes_brief_to_parent_leader_subdir(tmp_path):
 def test_subordinate_dispatch_refuses_non_subordinate(tmp_path):
     """The CTO trying to dispatch a CMO-owned bet must be refused
     with ROLE_NOT_SUBORDINATE — the CMO reports to the CEO, not the CTO."""
-    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "press_outreach", "cmo")
 
@@ -762,7 +769,11 @@ def test_subordinate_dispatch_depth_cap(tmp_path):
     next sub-dispatch with DEPTH_LIMIT."""
     cfg = _config(
         _recursive_roles(),
-        execution=ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=2),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            max_dispatch_depth=2,
+            reviews_dir_per_leader=True,
+        ),
     )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "fix_jwt", "engineer")
@@ -786,7 +797,11 @@ def test_subordinate_dispatch_cycle_detected(tmp_path):
     repetition counts as a cycle."""
     cfg = _config(
         _recursive_roles(),
-        execution=ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=10),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            max_dispatch_depth=10,
+            reviews_dir_per_leader=True,
+        ),
     )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "engineer_thing", "engineer")
@@ -815,7 +830,11 @@ def test_subordinate_dispatch_repeated_bet_slug_is_legitimate_escalation(tmp_pat
     after a failed first attempt)."""
     cfg = _config(
         _recursive_roles(),
-        execution=ExecutionConfig(top_level_leader="ceo", max_dispatch_depth=10),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            max_dispatch_depth=10,
+            reviews_dir_per_leader=True,
+        ),
     )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "fix_jwt", "engineer")
@@ -840,6 +859,7 @@ def test_subordinate_dispatch_session_budget_global(tmp_path):
         execution=ExecutionConfig(
             top_level_leader="ceo",
             budgets=ExecutionBudgets(per_session_usd_max=Decimal("0.05")),
+            reviews_dir_per_leader=True,
         ),
     )
     bets_dir = tmp_path / "Brain/Bets"
@@ -871,6 +891,7 @@ def test_subordinate_dispatch_per_role_daily_uses_sub_role(tmp_path):
             budgets=ExecutionBudgets(
                 per_role_daily_usd_max={"engineer": Decimal("0.10")},
             ),
+            reviews_dir_per_leader=True,
         ),
     )
     bets_dir = tmp_path / "Brain/Bets"
@@ -912,7 +933,10 @@ def test_subordinate_dispatch_per_role_daily_uses_sub_role(tmp_path):
 def test_subordinate_dispatch_extends_chain_in_envelope(tmp_path):
     """The envelope carries the new chain so a sub-agent that wants to
     spawn its OWN subordinate can pass it through unchanged."""
-    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "fix_jwt", "engineer")
 
@@ -931,7 +955,10 @@ def test_subordinate_dispatch_extends_chain_in_envelope(tmp_path):
 
 def test_subordinate_dispatch_session_spend_advances(tmp_path):
     """new_session_spend = parent_session_spend + sub-agent estimate."""
-    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "fix_jwt", "engineer")
 
@@ -984,7 +1011,10 @@ def test_subordinate_dispatch_missing_bet_raises(tmp_path):
     """If the leader-agent forgot to author the sub-bet file, dispatch
     refuses loudly with FileNotFoundError — not a silent skip — because
     the contract is that the leader writes the file before dispatching."""
-    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
 
     with pytest.raises(FileNotFoundError, match="sub-bet not found"):
         dispatch_subordinate(
@@ -996,11 +1026,46 @@ def test_subordinate_dispatch_missing_bet_raises(tmp_path):
         )
 
 
+def test_subordinate_dispatch_refuses_when_per_leader_flag_off(tmp_path):
+    """Issue #33: sub-dispatch routes briefs into a per-leader subdir
+    (`<reviews_dir>/<parent>/<sub-slug>/`), which is only consistent when
+    the rest of the vault uses the per-leader layout. Refuse loudly when
+    `execution.reviews_dir_per_leader` is false instead of silently
+    creating a half-and-half layout.
+
+    The error message must point the user at the migration command —
+    `/execute` surfaces it verbatim, so it has to be self-explanatory.
+    """
+    # Default ExecutionConfig has reviews_dir_per_leader=False.
+    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    assert cfg.execution is not None
+    assert cfg.execution.reviews_dir_per_leader is False
+
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    with pytest.raises(SubDispatchRequiresPerLeaderError) as exc:
+        dispatch_subordinate(
+            vault_root=tmp_path,
+            cfg=cfg,
+            parent_role_id="cto",
+            sub_bet_slug="fix_jwt",
+            parent_chain=[("cto", "refactor_auth")],
+        )
+    msg = str(exc.value)
+    # The user must know which knob to flip and how to migrate.
+    assert "reviews_dir_per_leader" in msg
+    assert "cns vault migrate-reviews" in msg
+
+
 def test_subordinate_dispatch_refuses_unknown_subordinate(tmp_path):
     """A bet whose owner is not in cfg.roles trips the same
     not-subordinate guard — the CTO can't dispatch into a role that
     doesn't exist in the org tree."""
-    cfg = _config(_recursive_roles(), execution=ExecutionConfig(top_level_leader="ceo"))
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(top_level_leader="ceo", reviews_dir_per_leader=True),
+    )
     bets_dir = tmp_path / "Brain/Bets"
     _write_bet(bets_dir, "ghost", "phantom_role")
 
