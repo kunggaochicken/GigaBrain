@@ -172,7 +172,11 @@ function deriveSlugFromBriefPath(absPath: string, reviewsRoot: string): string {
 // Open conflicts
 // ---------------------------------------------------------------------------
 
-const CONFLICT_HEADING_RE = /^### (C-\d{4}-\d{2}-\d{2}-[a-z0-9_]+)\b/;
+// Slug suffix is `make_conflict_id`-emitted (`cns/conflicts.py`): the slug part
+// is built by `cns/detector.py` and routinely contains hyphens (e.g.
+// `-needs-sparring`, `-killed-trigger`, `-vs-...`). Hyphen is placed last in the
+// character class so it isn't interpreted as a range.
+const CONFLICT_HEADING_RE = /^### (C-\d{4}-\d{2}-\d{2}-[a-z0-9_-]+)\b/;
 const ROLE_HEADING_RE = /^## .+ \(([a-z0-9_-]+)\)/;
 
 /**

@@ -223,6 +223,35 @@ describe("vaultState.scan — synthetic edge cases", () => {
     expect(state.openConflicts).toEqual([]);
   });
 
+  it("matches conflict headings whose slug contains hyphens", async () => {
+    // Real CNS pipeline IDs include hyphen-containing slugs from `cns/detector.py`:
+    // e.g. `-needs-sparring`, `-killed-trigger`, `-vs-...`. Regression for the
+    // regex previously rejecting hyphens in the slug suffix (PR #55 review).
+    const conflictsBody = [
+      "# Open Conflicts",
+      "_Last updated by detector: 2026-04-29_",
+      "",
+      "## CEO (ceo)",
+      "### C-2026-04-29-ship-v1-needs-sparring (1 day open)",
+      "- **Bet:** [[bet_ship_v1]]",
+      "- **First detected:** 2026-04-28",
+      "- **Trigger:** Kill criteria for 'Ship v1' is unspecified — needs sparring.",
+      "",
+    ].join("\n");
+    await writeFile(join(dir, "Brain", "CONFLICTS.md"), conflictsBody);
+
+    const state = await scan(defaultOpts(dir));
+
+    expect(state.openConflicts).toHaveLength(1);
+    expect(state.openConflicts[0]).toMatchObject({
+      id: "C-2026-04-29-ship-v1-needs-sparring",
+      owner: "ceo",
+      betFile: "bet_ship_v1.md",
+      firstDetected: "2026-04-28",
+      anchor: "C-2026-04-29-ship-v1-needs-sparring",
+    });
+  });
+
   it("does not include archived/closed bets (status != active)", async () => {
     await writeFile(
       join(dir, "Brain", "Bets", "bet_killed.md"),
