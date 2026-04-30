@@ -74,3 +74,66 @@ export class App {}
 export function setIcon(_el: unknown, _name: string): void {
   /* no-op */
 }
+
+// ---- Stubs reached for transitively via `settings.ts` import chain ----
+// `processors/conflictsActions.ts` imports `getVaultBasePath` from
+// `../settings`, which itself extends `PluginSettingTab` and references
+// `FileSystemAdapter`. Tests don't exercise the settings panel, but the
+// module needs to evaluate without throwing on class-resolution.
+
+export class PluginSettingTab {
+  app: unknown;
+  plugin: unknown;
+  containerEl: FakeEl = new FakeEl();
+  constructor(app: unknown, plugin: unknown) {
+    this.app = app;
+    this.plugin = plugin;
+  }
+  display(): void {
+    /* no-op */
+  }
+  hide(): void {
+    /* no-op */
+  }
+}
+
+export class Setting {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  controlEl: any = new FakeEl();
+  constructor(_containerEl: unknown) {
+    /* no-op */
+  }
+  setName(_name: string): this {
+    return this;
+  }
+  setDesc(_desc: string): this {
+    return this;
+  }
+  addText(_cb: (t: unknown) => void): this {
+    return this;
+  }
+  addToggle(_cb: (t: unknown) => void): this {
+    return this;
+  }
+  then(_cb: (s: this) => void): this {
+    return this;
+  }
+}
+
+export class FileSystemAdapter {
+  getBasePath(): string {
+    return "";
+  }
+}
+
+export class Notice {
+  constructor(_message: string, _timeout?: number) {
+    /* no-op */
+  }
+}
+
+export class TFile {}
+
+export class TAbstractFile {}
+
+export class WorkspaceLeaf {}

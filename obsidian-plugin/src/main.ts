@@ -25,6 +25,7 @@ import { GigaBrainSidebar, SIDEBAR_VIEW_TYPE } from "./views/sidebar";
 import { GigaBrainStatusBar } from "./views/statusBar";
 import { betActionBar } from "./processors/betActions";
 import { briefActionBar } from "./processors/briefActions";
+import { conflictsActionBar } from "./processors/conflictsActions";
 import { BetWatcher } from "./watchers/betWatcher";
 
 /** Vault event debounce (per architecture §2.3). */
@@ -95,6 +96,16 @@ export default class GigaBrainPlugin extends Plugin {
       void briefActionBar(el, ctx, this);
     });
     // --- end brief action bar wiring ---
+
+    // --- conflict action bar wiring (GIG-101) ---
+    // Inject [Spar this] / [Open bet] next to each `### C-...` heading in
+    // CONFLICTS.md. The processor checks sourcePath against
+    // settings.conflictsFile and walks every conflict heading in the
+    // rendered section. Architecture §3.3.
+    this.registerMarkdownPostProcessor((el, ctx) => {
+      conflictsActionBar(el, ctx, this);
+    });
+    // --- end conflict action bar wiring ---
 
     // --- status bar wiring (GIG-98) ---
     // Health glyph that mirrors the sidebar's queues: red on any conflict,
