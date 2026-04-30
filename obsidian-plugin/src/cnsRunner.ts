@@ -20,6 +20,12 @@ export interface RunOptions {
   cwd?: string;
   /** Optional timeout in ms. Default: 30s. */
   timeoutMs?: number;
+  /**
+   * Optional cancellation signal. When the signal aborts (e.g. plugin
+   * unload), the spawned child is sent SIGTERM. If the signal is already
+   * aborted at call time the child is killed immediately.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -167,6 +173,29 @@ export function run(
       child.kill("SIGTERM");
     }, timeoutMs);
 
+    // Wire opts.signal to child.kill so callers can cancel an in-flight run
+    // (e.g. the bet watcher's dispose() flow on plugin unload). Both this
+    // listener and the timeout above must be torn down on natural exit so
+    // neither leaks the other's handler.
+    const onAbort = (): void => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Process may already be gone — ignore.
+      }
+    };
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        onAbort();
+      } else {
+        opts.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener?.("abort", onAbort);
+    };
+
     child.stdout?.on("data", (chunk) => {
       stdout += chunk.toString();
     });
@@ -175,12 +204,12 @@ export function run(
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
+      cleanup();
       reject(err);
     });
 
     child.on("close", (code) => {
-      clearTimeout(timer);
+      cleanup();
       if (timedOut) {
         reject(new Error(`cns command timed out after ${timeoutMs}ms: ${binPath} ${args.join(" ")}`));
         return;
