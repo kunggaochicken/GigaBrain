@@ -1,0 +1,32 @@
+{
+  "name": "gigabrain-cns",
+  "version": "0.1.0",
+  "description": "GigaBrain CNS plugin for Obsidian — vault as control plane.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "version": "node -e \"const fs=require('fs');const pkg=require('./package.json');const m=require('./manifest.json');m.version=pkg.version;fs.writeFileSync('manifest.json',JSON.stringify(m,null,2)+'\\n');\""
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "gigabrain",
+    "cns"
+  ],
+  "author": "GigaBrain",
+  "license": "MIT",
+  "peerDependencies": {
+    "obsidian": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.21.0",
+    "obsidian": "^1.5.0",
+    "tslib": "^2.6.2",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
