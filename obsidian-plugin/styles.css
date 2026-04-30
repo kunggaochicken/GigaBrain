@@ -1,8 +1,9 @@
-/* GigaBrain CNS plugin — Phase 1 sidebar styling.
+/* GigaBrain CNS plugin — Phase 1 sidebar + Phase 2 action bar / modal styling.
  * Minimal — defers to Obsidian's CSS variables for typography/colors so the
- * sidebar fits any theme.
+ * UI fits any theme.
  */
 
+/* --- sidebar --- */
 .gigabrain-sidebar {
   padding: 0.5em 0.75em;
   font-size: var(--font-ui-small);
@@ -60,4 +61,58 @@
   border-top: 1px solid var(--background-modifier-border);
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
+}
+
+/* --- bet action bar --- */
+.gigabrain-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-bottom: 1em;
+  padding: 0.5em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+}
+
+.gigabrain-action-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.gigabrain-action-bar button .gigabrain-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* --- streaming run-skill modal --- */
+.gigabrain-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5em;
+}
+
+.gigabrain-modal-buttons {
+  display: flex;
+  gap: 0.5em;
+}
+
+.gigabrain-modal-log {
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.gigabrain-modal-log .stderr {
+  color: var(--text-error);
+}
+
+.gigabrain-modal-footer {
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  color: var(--text-muted);
 }
