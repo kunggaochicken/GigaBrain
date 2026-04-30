@@ -1,0 +1,5 @@
+vault: .
+roles:
+  - id: ceo
+    name: CEO
+    workspaces: []

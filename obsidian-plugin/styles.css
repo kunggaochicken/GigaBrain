@@ -1,3 +1,63 @@
-/* GigaBrain CNS plugin — styles intentionally empty for v0.1.
- * Phase 1 (status bar, sidebar pane) will populate this file.
+/* GigaBrain CNS plugin — Phase 1 sidebar styling.
+ * Minimal — defers to Obsidian's CSS variables for typography/colors so the
+ * sidebar fits any theme.
  */
+
+.gigabrain-sidebar {
+  padding: 0.5em 0.75em;
+  font-size: var(--font-ui-small);
+}
+
+.gigabrain-sidebar-heading h3 {
+  margin: 0 0 0.5em 0;
+}
+
+.gigabrain-sidebar-section {
+  margin-bottom: 1em;
+}
+
+.gigabrain-sidebar-section h4 {
+  margin: 0 0 0.25em 0;
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.gigabrain-sidebar-list {
+  margin: 0;
+  padding-left: 1em;
+  list-style: disc;
+}
+
+.gigabrain-sidebar-list li {
+  margin: 0.15em 0;
+}
+
+.gigabrain-sidebar-link {
+  cursor: pointer;
+  color: var(--text-accent);
+  text-decoration: none;
+}
+
+.gigabrain-sidebar-link:hover {
+  text-decoration: underline;
+}
+
+.gigabrain-sidebar-suffix {
+  color: var(--text-muted);
+}
+
+.gigabrain-sidebar-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.gigabrain-sidebar-footer {
+  margin-top: 1em;
+  padding-top: 0.5em;
+  border-top: 1px solid var(--background-modifier-border);
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
