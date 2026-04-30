@@ -949,6 +949,37 @@ def test_subordinate_dispatch_session_spend_advances(tmp_path):
     assert result.new_session_spend == Decimal("0.10") + est.usd
 
 
+def test_subordinate_dispatch_no_synthetic_role_id(tmp_path):
+    """Regression for issue #32: dispatch_subordinate must not produce
+    any plan item carrying a synthetic role id (anything starting with
+    `__`). The previous implementation seeded a `__sub_dispatch_session_seed__`
+    entry into enforce_budgets — we now pass running_session_total directly."""
+    cfg = _config(
+        _recursive_roles(),
+        execution=ExecutionConfig(
+            top_level_leader="ceo",
+            budgets=ExecutionBudgets(per_session_usd_max=Decimal("10.00")),
+        ),
+    )
+    bets_dir = tmp_path / "Brain/Bets"
+    _write_bet(bets_dir, "fix_jwt", "engineer")
+
+    result = dispatch_subordinate(
+        vault_root=tmp_path,
+        cfg=cfg,
+        parent_role_id="cto",
+        sub_bet_slug="fix_jwt",
+        parent_chain=[("cto", "refactor_auth")],
+        parent_session_spend=Decimal("0.50"),
+    )
+
+    # The single plan item must carry the real role and the real bet
+    # slug — no `__seed__` slug, no `__sub_dispatch_session_seed__` role.
+    assert result.plan_item.owner == "engineer"
+    assert not result.plan_item.owner.startswith("__")
+    assert not result.plan_item.bet_slug.startswith("__")
+
+
 def test_subordinate_dispatch_missing_bet_raises(tmp_path):
     """If the leader-agent forgot to author the sub-bet file, dispatch
     refuses loudly with FileNotFoundError — not a silent skip — because

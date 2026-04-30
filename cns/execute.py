@@ -657,10 +657,11 @@ def dispatch_subordinate(
         )
 
     # 5. Budget enforcement. We re-use enforce_budgets so the per_run /
-    # per_session / per_role_daily logic stays in one place. The trick is
-    # that per_session is global across the recursion, so we seed the
-    # decision loop with `parent_session_spend` worth of "pretend already
-    # spent this run" via a sentinel estimate.
+    # per_session / per_role_daily logic stays in one place. per_session
+    # is global across the recursion, so we pass `parent_session_spend`
+    # via the `running_session_total` kwarg — the cap is checked against
+    # the full call-tree running total without polluting the estimates
+    # list with a synthetic entry.
     reviews_dir = vault_root / cfg.execution.reviews_dir
     estimate = estimate_bet_cost(
         bet=bet,
@@ -673,24 +674,11 @@ def dispatch_subordinate(
         bet.owner: role_spend_last_24h(reviews_dir=reviews_dir, role=bet.owner)
     }
 
-    # Seed the running total via a synthetic head-of-batch entry priced at
-    # `parent_session_spend`. We use a role id that can't collide with a
-    # real one and a per_role_daily cap is unaffected because the seed
-    # role won't be in the budgets map.
-    seed_role = "__sub_dispatch_session_seed__"
-    seed_estimate = CostEstimate(
-        input_tokens=0,
-        output_tokens=0,
-        usd=parent_session_spend,
-        model=estimate.model,
-    )
     decisions = enforce_budgets(
-        estimates=[
-            (f"__seed__{sub_bet_slug}", seed_role, seed_estimate),
-            (sub_bet_slug, bet.owner, estimate),
-        ],
+        estimates=[(sub_bet_slug, bet.owner, estimate)],
         budgets=cfg.execution.budgets,
         historical_role_spend=historical_role_spend,
+        running_session_total=parent_session_spend,
     )
     sub_decision = next(d for d in decisions if d.bet_slug == sub_bet_slug)
     if not sub_decision.allowed:

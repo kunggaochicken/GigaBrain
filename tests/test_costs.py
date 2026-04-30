@@ -271,3 +271,54 @@ def test_enforce_budgets_returns_one_decision_per_estimate():
     )
     assert len(decisions) == 2
     assert all(isinstance(d, BudgetDecision) for d in decisions)
+
+
+def test_enforce_budgets_running_session_total_counts_against_cap():
+    """Recursive sub-dispatch (issue #32): pre-existing session spend is
+    passed via `running_session_total` rather than a synthetic seed
+    estimate. The new bet's USD must be added to that running total when
+    checking per_session_usd_max."""
+    decisions = enforce_budgets(
+        estimates=[("sub", "engineer", _est("0.40"))],
+        budgets=ExecutionBudgets(per_session_usd_max=Decimal("0.50")),
+        historical_role_spend={},
+        running_session_total=Decimal("0.20"),  # 0.20 + 0.40 > 0.50
+    )
+    assert decisions[0].allowed is False
+    assert "per_session_usd_max" in decisions[0].refusal_reason
+
+
+def test_enforce_budgets_running_session_total_allows_when_under_cap():
+    """Sanity counterpart: the same call passes when the running total
+    leaves room under the cap."""
+    decisions = enforce_budgets(
+        estimates=[("sub", "engineer", _est("0.20"))],
+        budgets=ExecutionBudgets(per_session_usd_max=Decimal("0.50")),
+        historical_role_spend={},
+        running_session_total=Decimal("0.20"),  # 0.20 + 0.20 <= 0.50
+    )
+    assert decisions[0].allowed is True
+
+
+def test_enforce_budgets_running_session_total_does_not_affect_per_role_daily():
+    """`running_session_total` must only affect per_session_usd_max — it
+    is an opaque scalar, not attributable to any role, so per-role-daily
+    caps see only `historical_role_spend` plus this batch's estimates."""
+    decisions = enforce_budgets(
+        estimates=[("sub", "engineer", _est("0.30"))],
+        budgets=ExecutionBudgets(per_role_daily_usd_max={"engineer": Decimal("1.00")}),
+        historical_role_spend={"engineer": Decimal("0.50")},
+        running_session_total=Decimal("5.00"),  # huge, but per-role unaffected
+    )
+    assert decisions[0].allowed is True
+
+
+def test_enforce_budgets_running_session_total_defaults_to_zero():
+    """Top-level dispatch passes nothing — old call sites must keep
+    working unchanged."""
+    decisions = enforce_budgets(
+        estimates=[("a", "cto", _est("0.40"))],
+        budgets=ExecutionBudgets(per_session_usd_max=Decimal("0.50")),
+        historical_role_spend={},
+    )
+    assert decisions[0].allowed is True
