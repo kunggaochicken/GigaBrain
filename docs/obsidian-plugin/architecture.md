@@ -96,7 +96,7 @@ Two invariants the code must preserve:
 
 The single-console principle is enforced structurally, not aspirationally:
 
-- The sidebar's `pendingBriefs` list links straight to `brief.md`. The brief's action bar (`processors/briefActions.ts`) carries `[Accept]`, `[Reject]`, `[Edit-and-rerun]`, `[View files]` — equivalent to the `/spar` Phase 2 menu. The leader never opens a terminal.
+- The sidebar renders a flat oldest-first list (no grouping by leader in v1; see §7.6). Each `pendingBriefs` entry links straight to `brief.md`. The brief's action bar (`processors/briefActions.ts`) carries `[Accept]`, `[Reject]`, `[Edit-and-rerun]`, `[View files]` — equivalent to the `/spar` Phase 2 menu. The leader never opens a terminal.
 - `[View files]` opens the staged files in Obsidian splits (the staging tree is inside the vault). The leader does not `cd` into an external workspace.
 - `processors/conflictsActions.ts` puts `[Spar this]`, `[Defer]`, `[Kill]` next to each `### C-...` heading in `CONFLICTS.md`. Action equivalents to the `/spar` Phase 1 menu.
 - Auto-reindex (Phase 4) means after editing a bet in Obsidian and switching tabs, `BETS.md` is fresh. No "did I remember to reindex?" tax.
@@ -207,12 +207,12 @@ Error model:
 ### 3.1 Bet files (`processors/betActions.ts`)
 
 - **Trigger condition:** rendered markdown for any file matching `<bets_dir>/bet_*.md` AND frontmatter parses successfully AND has a `status:` field.
-- **Buttons:**
+- **Buttons (v1 — locked by §7.1):**
   - `[Dispatch]` — icon `play-circle` — runs skill `/execute` with `--bet <slug>`. Long op, modal log.
-  - `[Spar]` — icon `swords` — runs skill `/spar` scoped to this bet (passes the bet slug as argument; `/spar` walks just this bet's open conflict if any). Long op, modal log.
-  - `[Mark reviewed]` — icon `check` — runs `cns bet touch <slug>` (needs to be added to the CLI; see §7) to bump `last_reviewed` to today. Short op, Notice.
-  - `[Defer 7d]` — icon `clock` — runs `cns bet defer <slug> --days 7` (needs CLI addition; see §7). Short op, Notice.
-- **Async behavior:** Dispatch and Spar are modal-log; the others are Notice-based.
+  - `[Spar]` — icon `swords` — runs skill `/spar --bet <slug>`. Skill emits its own "scoped to bet not yet supported" notice in v1 (§7.2). Long op, modal log.
+  - `[Open bet]` — icon `file-text` — focuses the editor on the bet's frontmatter line. Instant; no CLI call.
+- **Dropped from v1 (re-add in v2 per GIG-108):** `[Mark reviewed]`, `[Defer 7d]`.
+- **Async behavior:** Dispatch and Spar are modal-log.
 - **Error surface:** stderr verbatim in Notice or modal. No retries.
 
 ### 3.2 Brief files (`processors/briefActions.ts`)
@@ -229,11 +229,11 @@ Error model:
 ### 3.3 `CONFLICTS.md` (`processors/conflictsActions.ts`)
 
 - **Trigger condition:** path equals `<conflicts_file>`.
-- **Buttons (per-conflict, attached to each `### C-…` heading):**
-  - `[Spar this]` — icon `swords` — runs skill `/spar` with `--conflict <id>`. Long op, modal log. (Skill needs to honor `--conflict`; see §7.)
+- **Buttons (v1 — locked by §7.1):**
+  - `[Spar this]` — icon `swords` — runs skill `/spar --conflict <id>`. Skill emits its own "scoped sparring not yet supported" notice in v1 (§7.2). Long op, modal log.
   - `[Open bet]` — icon `file-text` — opens the linked `[[bet_…]]` file in a new tab. Instant.
-  - `[Defer 7d]` — icon `clock` — runs `cns bet defer <slug> --days 7`. Short op, Notice. After success, removes the conflict from `CONFLICTS.md` (the next `cns detect` would re-add it; we proactively strip it now to keep the queue tight).
-- **Async behavior:** Spar this as modal; the rest as Notice.
+- **Dropped from v1 (re-add in v2 per GIG-108):** `[Defer 7d]`.
+- **Async behavior:** Spar this as modal; Open bet is instant.
 - **Error surface:** as above.
 
 ---
@@ -335,24 +335,59 @@ CI: a GitHub Actions workflow on tags matching `obsidian-v*` builds the bundle a
 
 ---
 
-## 7. Open questions / decisions deferred
+## 7. Decisions ratified (was: open questions)
 
-These need product input but each has a recommended default the implementing agent should ship if no answer arrives.
+These were the architect's open questions. Adversarial review (Red Team + Pragmatist) was run on a proposed answer set; the rulings below are now the locked spec for Phase 1+ implementing agents.
 
-1. **Should `[Mark reviewed]` and `[Defer]` exist as CLI commands or as in-plugin frontmatter writes?**
-   Recommended default: **add `cns bet touch <slug>` and `cns bet defer <slug> --days N` to the CLI** (matches the rule that the plugin never writes bet files directly). Cost: one PR against `cns/cli.py` plus a `cns/bet.py` helper. Until those land, the plugin's `[Mark reviewed]` and `[Defer]` buttons are hidden behind a setting `enableBetActions: false`.
+### 7.1 `[Mark reviewed]` and `[Defer 7d]` buttons — DROPPED FROM v1
 
-2. **Should `/spar` accept `--bet <slug>` and `--conflict <id>` to scope a single-conflict walk?**
-   Recommended default: **yes, but as no-ops for v1.** The plugin passes the flags; the skill currently ignores them and walks the full queue. The leader experiences "click [Spar this]" and gets the full sparring session. Acceptable for v1 because the conflict they clicked is almost always at the front of the queue (oldest-first sort). A future ticket adds true single-target scoping; the plugin contract does not change.
+**Decision:** the bet-file action bar in v1 ships **only** `[Dispatch]`, `[Spar]`, `[Open bet]`. The conflict action bar in v1 ships **only** `[Spar this]`, `[Open bet]`. No `[Mark reviewed]`, no `[Defer 7d]`.
 
-3. **What's the right staleness threshold (`settings.staleAfterDays`)?**
-   Recommended default: **30 days**. Empirically: a bet untouched for a month is either done-but-not-marked or no longer real. If the leader's vaults run hotter, they can lower it in settings. Plugin ships with 30; we revisit after 4 weeks of dogfooding.
+**Rationale:** ~5 keystrokes saved at low frequency does not justify (a) two new CLI commands with non-trivial schema-coupling concerns (`deferred_until` is currently a *detection-rule input*, so `cns bet defer` couples CLI semantics to detector semantics), (b) a runtime CLI capability probe in the plugin to handle CLI-not-yet-shipped, (c) opening the door to "the plugin handles CLI weirdness in its own UI" as a recurring pattern. For the rare v1 case where the leader needs to bump `last_reviewed` or set `deferred_until`, they click `[Open bet]` and edit the frontmatter manually — same mechanical action minus the plumbing.
 
-4. **Does the sidebar need a section for `briefs that failed to parse`?**
-   Recommended default: **no for v1.** The brief schema is locked by `cns/reviews.py:Brief`; a parse failure means the dispatched agent wrote a malformed file and `/execute` already flagged it (`brief_failed: true`). Surfacing it twice in the sidebar adds noise. Phase 6 dogfooding will tell us if this is wrong.
+**When v2 ships:** add `cns bet touch` and (probably) `cns conflicts defer <id>` (defer at conflict-altitude is the more-correct semantics) in one PR, and the buttons in the same PR. No probe, no graceful-degrade — they ship together.
 
-5. **Should the auto-reindex run on every `bet_*.md` save, or only when `obsidian-window-blur` fires?**
-   Recommended default: **on save, debounced 1500ms** (per GIG-102). Save-driven is more responsive (the leader sees `BETS.md` update before they switch tabs) and the debounce already protects against typing storms. Window-blur was rejected as too coarse — Obsidian doesn't always fire blur cleanly when switching panes within the same window.
+**Filed:** GIG-108 (v2 follow-up: bet review/defer CLI + buttons).
 
-6. **Per-leader review queues in the sidebar (recursive org tree).**
-   **Out of scope for v1.** CLAUDE.md is explicit that v1 implements the leader queue for the top-level leader only. The plugin's `vaultState` already accepts both layouts (flat and per-leader) and merges them; the sidebar shows them as a single list. When the recursive org tree lands, a separate ticket adds a leader picker. Don't pre-build it.
+### 7.2 `/spar --bet <slug>` and `--conflict <id>` — plugin passes, skill announces
+
+**Decision:** plugin passes the flags. The `/spar` skill itself emits a single stdout line as its first output: `Note: --conflict accepted but ignored in v1; walking full queue.` Plugin streams that to the modal log like any other skill output. Plugin contains zero defensive narration — the skill owns its own behavior surface.
+
+**When v2 ships scoped sparring:** `/spar` stops printing the note, starts honoring the flag. Plugin code does not change.
+
+**Filed:** GIG-109 (v2 follow-up: scoped `/spar` + drop the v1 announcement line).
+
+### 7.3 Staleness threshold — 30 days
+
+**Decision:** `settings.staleAfterDays` defaults to **30**. Settings-overridable. No tooltip on stale entries — the slug + `Nd` suffix is enough; the leader clicks through to read the bet.
+
+**Why not 14:** strategic bets at quarterly or yearly horizons should go silent for stretches by design. A 14-day global default would nag the leader on slow-cycle bets weekly, train them to ignore the staleness section, and the alarm becomes wallpaper. The horizon field already exists on bet frontmatter; horizon-aware staleness is the correct shape but it is v2 work.
+
+**Filed:** GIG-110 (v2 follow-up: horizon-aware staleness threshold).
+
+### 7.4 Briefs-failed-to-parse — `console.warn` only, no UI
+
+**Decision:** when `vaultState.scan` hits a parse error, `console.warn` with the path. No badge, no footer chrome, no sidebar section. If dogfooding shows real recurrence, design a real surface (likely a "GigaBrain: show diagnostics" command-palette entry) — don't add chrome speculatively.
+
+### 7.5 Auto-reindex on save, debounced 1500ms — accepted
+
+**Decision:** as originally specced. No modification.
+
+### 7.6 Per-leader review queues — flat list, refactor in v2
+
+**Decision:** sidebar renders a flat list (one `<ul>`, oldest-first). No grouping by `owner`. When v2 ships per-leader scoping the refactor is ~30 min of `groupBy` — pay it then, when the v2 UX shape is known. Group-by-owner today (with one owner) ships extra visual noise for a feature that has zero v1 value.
+
+**Filed:** GIG-111 (v2 follow-up: leader picker + sidebar grouping).
+
+---
+
+### 7.7 Adversarial review record
+
+The decisions above replaced an earlier proposal set. The losing arguments are recorded here so future agents don't re-litigate:
+
+- **14d staleness threshold** (rejected): "wallpaper" risk on slow-cycle bets, no dogfooding evidence base.
+- **Group-by-owner from day one** (rejected): premature abstraction; one-owner-with-headings is worse UX than a flat list.
+- **CLI capability probe + hidden buttons** (rejected): adds plugin-side complexity for a graceful-degrade scenario that vanishes if the CLI work is sequenced before the buttons.
+- **Aggregate parse-error footer badge** (rejected): half-undid the architect's clean "no"; debug aid masquerading as a workflow surface.
+- **Plugin-side "scoped sparring not yet supported" header text** (rejected): plugin should not editorialize skill behavior. Moved upstream.
+- **Compound pattern caught:** several modifications individually small but together established "the plugin handles CLI/data weirdness in its own UI" as a pattern, in tension with §1.2's "no write happens without a CLI or skill mediating it." Killing them all preserved the invariant.
