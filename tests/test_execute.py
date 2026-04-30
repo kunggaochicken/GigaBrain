@@ -986,6 +986,7 @@ def test_subordinate_dispatch_no_synthetic_role_id(tmp_path):
         execution=ExecutionConfig(
             top_level_leader="ceo",
             budgets=ExecutionBudgets(per_session_usd_max=Decimal("10.00")),
+            reviews_dir_per_leader=True,
         ),
     )
     bets_dir = tmp_path / "Brain/Bets"
