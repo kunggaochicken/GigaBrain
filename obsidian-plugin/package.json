@@ -1,5 +1,5 @@
 {
-  "name": "gigabrain-cns",
+  "name": "gigabrain",
   "version": "0.1.0",
   "description": "GigaBrain CNS plugin for Obsidian — vault as control plane.",
   "main": "main.js",

@@ -6,6 +6,10 @@ A **delegation console for leaders**. GigaBrain models your work like a company 
 
 GigaBrain is built for whoever leads a team — CEO, manager, tech lead, anyone who delegates to people or agents who can mostly run independently. The leader operates at the **vision and positioning** layer; subordinates handle implementation. The system grows with you: today a flat CEO → C-suite split, eventually a recursive tree (CTO spawns VPs spawns engineers) as load demands. See [CLAUDE.md](CLAUDE.md) for the full mental model.
 
+## Obsidian plugin
+
+There's an in-editor surface for the delegation console: a sidebar of pending briefs, open conflicts, and stale bets, plus action bars on bet/brief/conflict files that dispatch agents and walk reviews — all without leaving Obsidian. Distributed via [BRAT](https://github.com/TfTHacker/obsidian42-brat) for v1; install instructions and a settings walkthrough are in [`obsidian-plugin/README.md`](obsidian-plugin/README.md).
+
 ## What it does
 
 CNS turns scattered strategy docs (planning notes, todos, daily journals, memory files) into one-bet-per-file atoms with explicit kill criteria. A nightly detector compares your active bets against new vault edits, git commits, and GitHub PRs — and surfaces anything that contradicts an active bet. A `/spar` skill walks you through resolving conflicts one at a time. An `/execute` skill dispatches a role-scoped agent per bet to do the work and return a distilled brief.

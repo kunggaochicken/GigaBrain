@@ -4,6 +4,62 @@ All notable changes to GigaBrain CNS are documented here. The project follows [S
 
 ## Unreleased
 
+### Added — Obsidian plugin v0.1.0 (GIG-93..GIG-102, GIG-104)
+
+The Obsidian plugin makes the GigaBrain vault a real **delegation console
+inside Obsidian** — pending briefs, open conflicts, and stale bets visible
+at a glance, action bars next to each artifact, auto-reindex on bet save,
+and shell-out to the `cns` CLI / Claude Code skills without leaving the
+editor. Desktop-only. Distributed via
+[BRAT](https://github.com/TfTHacker/obsidian42-brat); see
+[`obsidian-plugin/README.md`](obsidian-plugin/README.md) for install
+instructions.
+
+What ships in v0.1.0:
+
+- **Phase 0 — plugin foundation (GIG-93/94/95/96):** plugin scaffold
+  (manifest, esbuild bundler, dev/build/test scripts), settings panel
+  with vault-path display and `cns` binary discovery + version probe,
+  hot-reload marker, and a `cnsRunner` module that any feature imports
+  to invoke CNS commands. `cnsRunner.run` accepts an `AbortSignal` and
+  forwards `SIGTERM` to the spawned child on abort.
+- **Phase 1 — sidebar + status bar (GIG-97/GIG-98):** an Obsidian
+  `ItemView` that lists pending briefs, open conflicts, and stale bets
+  in three flat oldest-first sections (no leader-grouping in v1 per
+  architecture spec §7.6) plus a status-bar glyph that mirrors the same
+  state — red on any conflict, yellow on briefs/stale bets, green
+  otherwise; click toggles the sidebar. Both surfaces refresh on a
+  shared 500ms debounce.
+- **Phase 2 — bet file action bar (GIG-99):** markdown post-processor
+  that injects `[Dispatch]` / `[Spar]` / `[Open bet]` above each
+  `bet_*.md` body in reading mode. Long ops stream through a modal log;
+  short ops use Obsidian Notices.
+- **Phase 3 — brief + conflict action bars (GIG-100/GIG-101):**
+  `[Accept]` / `[Reject]` / `[Edit-and-rerun]` / `[View files]` on
+  `<reviewsDir>/**/brief.md` (reviewer notes flow through
+  `/execute --reviewer-notes` argv — plugin never mutates
+  `brief.md`); `[Spar this]` / `[Open bet]` per `### C-...` heading on
+  `CONFLICTS.md`.
+- **Phase 4 — auto-reindex on bet save (GIG-102):** vault `modify`
+  watcher scoped to `<betsDir>/bet_*.md` runs `cns reindex --check`
+  after a 1500ms idle (separate from the sidebar's 500ms debouncer);
+  if the check exits non-zero it follows up with `cns reindex`.
+  Settings-tunable via `reindexDebounceMs`. Plugin unload aborts any
+  in-flight reindex.
+- **Phase 6 — packaging (GIG-104):** `.github/workflows/obsidian-release.yml`
+  builds and uploads `manifest.json` / `main.js` / `styles.css` to the
+  GitHub release for any tag matching `obsidian-v*`. README rewritten
+  to cover BRAT install, manual fallback, settings walkthrough,
+  first-run, and troubleshooting.
+- **Manifest:** `id: "gigabrain"`, `name: "GigaBrain"`,
+  `minAppVersion: "1.5.0"`, `isDesktopOnly: true` per architecture spec
+  §6. The id changed from the early `gigabrain-cns` prototype value;
+  fresh installs only.
+
+Deferred to a later release: Claude Code bridge attach mode (GIG-103;
+the sentinel-detection path is wired but only shell-out is exercised in
+v0.1).
+
 ### Added — PreToolUse hook executor (issue #30)
 - New CLI entry point `cns-hook-pretooluse` (and `python -m cns.hook_executor`):
   a Claude Code PreToolUse hook that reads the per-bet descriptor at

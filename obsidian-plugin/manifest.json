@@ -1,6 +1,6 @@
 {
-  "id": "gigabrain-cns",
-  "name": "GigaBrain CNS",
+  "id": "gigabrain",
+  "name": "GigaBrain",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
   "description": "Vault as control plane: read pending bets, conflicts, and review briefs — and trigger CNS commands — without leaving Obsidian.",
