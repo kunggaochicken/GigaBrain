@@ -1,0 +1,63 @@
+name: Obsidian plugin release
+
+# Builds the GigaBrain Obsidian plugin and attaches the BRAT-required artifacts
+# (manifest.json, main.js, styles.css) to a GitHub release.
+#
+# Trigger: pushing a tag like `obsidian-v0.1.0`. The `obsidian-` prefix keeps
+# this workflow from colliding with cns CLI tags (e.g. `v0.4.0`).
+#
+# Distribution model: BRAT (Beta Reviewer's Auto-update Tool). BRAT fetches
+# the three release assets directly from the GitHub release for the latest
+# tag matching this prefix. See obsidian-architecture.md §6 (Packaging plan).
+
+on:
+  push:
+    tags:
+      - "obsidian-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: obsidian-plugin/package-lock.json
+
+      - name: Install dependencies
+        working-directory: obsidian-plugin
+        run: npm ci
+
+      - name: Build plugin
+        working-directory: obsidian-plugin
+        run: npm run build
+
+      - name: Verify release artifacts
+        working-directory: obsidian-plugin
+        run: |
+          for f in manifest.json main.js styles.css; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing required release artifact: $f"
+              exit 1
+            fi
+          done
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          # BRAT looks at the three files attached to the release for this tag.
+          files: |
+            obsidian-plugin/manifest.json
+            obsidian-plugin/main.js
+            obsidian-plugin/styles.css
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -4,6 +4,49 @@ All notable changes to GigaBrain CNS are documented here. The project follows [S
 
 ## Unreleased
 
+### Added — Obsidian plugin v0.1.0 (GIG-93..GIG-99, GIG-104)
+
+The Obsidian plugin makes the GigaBrain vault a real **delegation console
+inside Obsidian** — pending briefs, open conflicts, and stale bets visible
+at a glance, action bars next to each artifact, and shell-out to the `cns`
+CLI / Claude Code skills without leaving the editor. Desktop-only.
+Distributed via [BRAT](https://github.com/TfTHacker/obsidian42-brat); see
+[`obsidian-plugin/README.md`](obsidian-plugin/README.md) for install
+instructions. v0.1.0 is what is shipped today on `main`; later phases
+(brief/conflict action bars, auto-reindex, claude-code bridge attach mode)
+will land in subsequent point releases.
+
+What ships in v0.1.0:
+
+- **Phase 0 — plugin foundation (GIG-93/94/95/96):** plugin scaffold
+  (manifest, esbuild bundler, dev/build/test scripts), settings panel
+  with vault-path display and `cns` binary discovery + version probe,
+  hot-reload marker, and a `cnsRunner` module that any future feature
+  imports to invoke CNS commands.
+- **Phase 1 — sidebar pane + statusBar (GIG-97):** an Obsidian
+  `ItemView` that lists pending briefs, open conflicts, and stale bets
+  in three flat oldest-first sections (no leader-grouping in v1 — see
+  architecture spec §7.6). Pure `vaultState.scan()` reducer rebuilds on
+  a 500ms debounce after vault edits.
+- **Phase 2 — bet file action bar (GIG-99):** markdown post-processor
+  that injects `[Dispatch]` / `[Spar]` / `[Open bet]` above each
+  `bet_*.md` body in reading mode. `[Dispatch]` and `[Spar]` shell
+  through `bridge/claudeCode.runSkill` (shell-out only in v0.1; the
+  Phase 5 sentinel-attached path is dead code with a unit test).
+- **Phase 6 — packaging (GIG-104):** `.github/workflows/obsidian-release.yml`
+  builds and uploads `manifest.json` / `main.js` / `styles.css` to the
+  GitHub release for any tag matching `obsidian-v*`. README rewritten
+  to cover BRAT install, manual fallback, settings walkthrough,
+  first-run, and troubleshooting.
+- **Manifest:** `id: "gigabrain"`, `name: "GigaBrain"`,
+  `minAppVersion: "1.5.0"`, `isDesktopOnly: true` per architecture spec
+  §6. The id changed from the early `gigabrain-cns` prototype value;
+  fresh installs only.
+
+Not yet on `main`: brief action bar (GIG-100), conflict action bar
+(GIG-101), auto-reindex watcher (GIG-102), Claude Code bridge attach
+mode (GIG-103). These will be picked up in subsequent point releases.
+
 ### Added — PreToolUse hook executor (issue #30)
 - New CLI entry point `cns-hook-pretooluse` (and `python -m cns.hook_executor`):
   a Claude Code PreToolUse hook that reads the per-bet descriptor at
