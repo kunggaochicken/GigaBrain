@@ -51,6 +51,50 @@ def test_kill_criteria_substring_triggers_conflict():
     assert conflicts[0].bet_file == "bet_a.md"
 
 
+def test_kill_criteria_note_preserves_full_text_under_cap():
+    """Issue #35: kill_criteria up to 240 chars must appear verbatim in the
+    detector note (no truncation, no ellipsis). The previous 120-char slice
+    cut mid-word."""
+    kc = (
+        "kill if scipy dependency removed from requirements OR "
+        "another tool/vendor claims the same wedge OR "
+        "design partners explicitly reject the framing"
+    )
+    assert len(kc) <= 240
+    bets = [(_bet(kill_criteria=kc), "bet_a.md")]
+    signals = [Signal(source="git:r#1", content="fix: scipy dependency removed from requirements")]
+    conflicts = detect_conflicts(bets, signals, _config(), today=date(2026, 4, 25))
+    triggered = [c for c in conflicts if "matches kill_criteria" in c.trigger.lower()]
+    assert len(triggered) == 1
+    note = triggered[0].detector_note
+    assert note == f"Kill criteria: {kc}"
+    assert "…" not in note
+
+
+def test_kill_criteria_note_truncates_with_ellipsis_over_cap():
+    """Issue #35: kill_criteria longer than 240 chars must be soft-capped at
+    240 with a trailing ellipsis (and trailing whitespace trimmed before the
+    ellipsis), not hard-cut at 120 with no marker."""
+    # Build a >240 char kill_criteria that still phrase-matches the signal.
+    long_tail = " " + ("filler clause about unrelated background context " * 10)
+    kc = "kill if scipy dependency removed from requirements" + long_tail
+    assert len(kc) > 240
+    bets = [(_bet(kill_criteria=kc), "bet_a.md")]
+    signals = [Signal(source="git:r#1", content="fix: scipy dependency removed from requirements")]
+    conflicts = detect_conflicts(bets, signals, _config(), today=date(2026, 4, 25))
+    triggered = [c for c in conflicts if "matches kill_criteria" in c.trigger.lower()]
+    assert len(triggered) == 1
+    note = triggered[0].detector_note
+    assert note.startswith("Kill criteria: ")
+    assert note.endswith("…")
+    # Body (without "Kill criteria: " prefix and trailing ellipsis) must be a
+    # rstripped prefix of the original — no mid-word cuts past the cap.
+    body = note[len("Kill criteria: ") : -len("…")]
+    assert len(body) <= 240
+    assert kc.startswith(body)
+    assert body == body.rstrip()
+
+
 def test_kill_criteria_no_overfire_on_single_topic_word():
     """v0.2: a single shared topic word (e.g., 'Logfire') in kill_criteria should NOT
     fire against every signal that mentions Logfire. v1 over-fired on this pattern."""
