@@ -80,7 +80,7 @@ Open *Settings → GigaBrain*. Every field below maps to a key in `loadData()`-p
 
 - **Debug logging** (`debugLogging`) — when on, the plugin emits verbose diagnostic logs to the developer console (open with `Cmd+Opt+I` on macOS, `Ctrl+Shift+I` on Windows/Linux). Leave off for normal use; turn on when filing a bug.
 
-- **Bets directory** (`betsDir`, default `Brain/Bets`) — vault-relative folder where `bet_*.md` files live. The sidebar's **Stale bets** section globs `<betsDir>/bet_*.md`; the auto-reindex watcher (Phase 4) listens for modify events under this path.
+- **Bets directory** (`betsDir`, default `Brain/Bets`) — vault-relative folder where `bet_*.md` files live. The sidebar's **Stale bets** section globs `<betsDir>/bet_*.md`. (The auto-reindex watcher in Phase 4 will also listen here once shipped — see GIG-102.)
 
 - **Reviews directory** (`reviewsDir`, default `Brain/Reviews`) — vault-relative folder where pending agent briefs land at `<reviewsDir>/<bet-slug>/brief.md`. The sidebar's **Pending briefs** section globs `<reviewsDir>/**/brief.md` and filters to `status: pending`. Per-leader layouts (`<reviewsDir>/<leader-id>/<slug>/brief.md`) are also recognized — both shapes resolve to the same flat list in v1.
 
