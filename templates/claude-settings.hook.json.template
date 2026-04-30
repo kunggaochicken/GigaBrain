@@ -1,0 +1,16 @@
+{
+  "_comment": "GigaBrain CNS PreToolUse hook — installs into .claude/settings.json (or ~/.claude/settings.json). Enforces /execute path, web, and bash scoping per issue #30. Safe to install globally: when no /execute run is in flight, the executor returns 'allow' (open mode).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cns-hook-pretooluse"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -24,6 +24,7 @@ from cns.execute import (
     build_dispatch_queue,
     dispatch_subordinate,
 )
+from cns.hook_executor import clear_active_sentinel, write_active_sentinel
 from cns.index import render_bets_index
 from cns.models import BetStatus
 from cns.pricing import format_usd
@@ -672,6 +673,36 @@ def _execute_init(vault):
     cfg_path.write_text(new_text, encoding="utf-8")
     (root / "Brain/Reviews").mkdir(parents=True, exist_ok=True)
     click.echo(f"Added execution{{}} block; top_level_leader='{root_role.id}'.")
+
+
+@cli.group("hook-active")
+def hook_active():
+    """Manage the active-bet sentinel that the PreToolUse hook reads.
+
+    The sentinel at ``<vault>/.cns/.agent-hooks/.active`` names the bet
+    whose hook descriptor the executor should enforce against. The
+    /execute skill writes it before invoking each Agent and clears it
+    after — see issue #30.
+    """
+
+
+@hook_active.command("set")
+@click.argument("slug")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+def hook_active_set(slug, vault):
+    """Mark `slug` as the active dispatch (for the PreToolUse hook)."""
+    root, _cfg = _load_vault(vault)
+    sentinel = write_active_sentinel(vault_root=root, bet_slug=slug)
+    click.echo(f"active bet: {slug}  ({sentinel})")
+
+
+@hook_active.command("clear")
+@click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
+def hook_active_clear(vault):
+    """Clear the active-bet sentinel (returns the hook to open mode)."""
+    root, _cfg = _load_vault(vault)
+    clear_active_sentinel(vault_root=root)
+    click.echo("active bet: cleared")
 
 
 @cli.group()

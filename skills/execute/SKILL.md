@@ -7,7 +7,17 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
 
 `/execute` reads active bets, dispatches a per-bet agent scoped to that bet's owner role's workspaces and tool allowlist, and parks each result in `Brain/Reviews/<bet-slug>/`. The leader reviews via `/spar`.
 
-> **v0.2 limitation — path scoping is prompt-enforced.** The `.cns/.agent-hooks/<bet-slug>.json` file is generated for forward-compatibility but is **NOT** consumed by any shipped hook executor. Path scoping is enforced **by prompt only** — the dispatched agent reads its system prompt and stays within its assigned workspace. A pre-tool-use hook that consumes this config will land in v0.3. See [#20](https://github.com/kunggaochicken/GigaBrain/issues/20).
+> **v0.3 — path/web/bash scoping is hook-enforced when the user opts in.** A
+> Claude Code PreToolUse hook (`cns-hook-pretooluse`) reads
+> `.cns/.agent-hooks/<bet-slug>.json` and denies Edit/Write outside the
+> staging dir, WebFetch outside the role's `web_allowlist`, and Bash
+> commands outside `bash_allowlist`. The hook is **opt-in**: install the
+> snippet from `templates/claude-settings.hook.json.template` per
+> [`docs/installing-hook-executor.md`](../../docs/installing-hook-executor.md).
+> When the hook is not installed, scoping falls back to prompt-enforcement
+> (the dispatched agent's system prompt still tells it to stay in scope).
+> Closes [#30](https://github.com/kunggaochicken/GigaBrain/issues/30) /
+> tracks [#20](https://github.com/kunggaochicken/GigaBrain/issues/20).
 
 ## When to use
 
@@ -31,11 +41,15 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
    Dispatch N agents? [y/N]
    ```
 
-4. **Write envelopes.** On confirmation, run `cns execute` (without `--dry-run`) to drop a forward-compat hook descriptor at `.cns/.agent-hooks/<bet-slug>.json` and prepare `Brain/Reviews/<slug>/`. Note: in v0.2 that JSON file is **not** consumed by any shipped executor — it documents the intended scope but does not enforce it. Scoping is delivered to the agent via its system prompt in step 5.
+4. **Write envelopes.** On confirmation, run `cns execute` (without `--dry-run`) to drop a hook descriptor at `.cns/.agent-hooks/<bet-slug>.json` and prepare `Brain/Reviews/<slug>/`. When the v0.3 PreToolUse hook is installed (`cns-hook-pretooluse`, see `docs/installing-hook-executor.md`), this descriptor is the source of truth for path/web/bash scoping. Scoping is also still injected into the agent's system prompt in step 5 as a belt-and-suspenders defense.
 
 5. **For each dispatched bet, invoke the Agent tool.** Sequential in v1. For each `[DISPATCH]` item:
 
    a. Read `.cns/.agent-hooks/<bet-slug>.json` to get the role config.
+   a'. **Mark the bet active for the hook executor:** run `cns hook-active set <bet-slug>`. The PreToolUse hook reads
+       `<vault>/.cns/.agent-hooks/.active` to know which descriptor to enforce against. (Or set `CNS_ACTIVE_BET=<slug>` and
+       `CNS_VAULT_ROOT=<vault>` in the dispatcher's env if you have a way to propagate them to the Agent subprocess.) When the
+       agent returns, run `cns hook-active clear` so the hook returns to open mode.
    b. Read the envelope materials (system_prompt, input_prompt) by re-running:
       ```
       python -c "from cns.execute import build_dispatch_queue, build_agent_envelope; import json; from pathlib import Path; from cns.config import find_vault_root, load_config; root = find_vault_root(Path.cwd()); cfg = load_config(root / '.cns/config.yaml'); plan = build_dispatch_queue(vault_root=root, cfg=cfg, bet_filter='<bet-slug>', owner_filter=None, include_pending=True); env = build_agent_envelope(item=plan[0], vault_root=root, cfg=cfg); print(json.dumps(env))"
@@ -77,7 +91,7 @@ description: Dispatch role-scoped agents to execute active bets. Each bet's owne
 - NEVER edit bet files directly. `/spar` is the only writer of bet `status`.
 - NEVER move staged files into workspaces. That happens at `/spar` accept time.
 - ALWAYS validate every brief.md after the agent returns. A malformed brief is a real failure mode and the user needs to know.
-- ALWAYS clean up `.cns/.agent-hooks/<bet-slug>.json` after the run completes (or fail loudly if it can't be cleaned). Cleanup is hygiene only — the file is not load-bearing in v0.2 (no shipped hook executor reads it; see the v0.2 limitation note above).
+- ALWAYS clean up `.cns/.agent-hooks/<bet-slug>.json` after the run completes (or fail loudly if it can't be cleaned). Also run `cns hook-active clear` to remove the active-bet sentinel — leaving it set will cause the v0.3 PreToolUse hook to keep enforcing against a stale descriptor in subsequent Claude Code sessions.
 - If a role has no workspaces (typically the leader role), skip it with a clear message — do NOT try to dispatch.
 
 ## Web tools (`tools.web`, `tools.web_allowlist`)
@@ -112,11 +126,14 @@ audits sources without leaving the vault. The dispatcher injects these
 instructions into the agent's system prompt; the agent is responsible for
 writing the file.
 
-**Prompt-enforcement caveat.** Like path scoping (see #20), web access in v0.2
-is enforced **by the agent's system prompt only**. The hook config records
-`web_enabled` and `web_allowlist` for forward-compatibility, but no shipped
-hook executor consumes them yet. A pre-tool-use hook that gates WebFetch on the
-allowlist will land alongside the path-enforcement hook.
+**v0.3 enforcement.** When the PreToolUse hook is installed (see
+`docs/installing-hook-executor.md`), `WebFetch` calls go through
+`cns-hook-pretooluse`, which denies any URL whose host is not in
+`tools.web_allowlist` and any call when `tools.web: false`. Without the
+hook, the agent's system prompt is still the only constraint — install
+the hook for actual enforcement. `WebSearch` is gated coarsely by the
+boolean `tools.web` flag (no per-host check, since search has no URL
+to inspect at request time).
 
 ## Failure modes
 

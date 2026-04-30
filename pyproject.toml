@@ -23,6 +23,7 @@ dev = [
 
 [project.scripts]
 cns = "cns.cli:cli"
+cns-hook-pretooluse = "cns.hook_executor:main"
 
 [build-system]
 requires = ["setuptools>=68"]
