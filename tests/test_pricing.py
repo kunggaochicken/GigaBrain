@@ -23,12 +23,30 @@ def test_pricing_table_has_three_models():
 
 
 def test_opus_input_output_only():
-    """1M input @ $15 + 1M output @ $75 = $90."""
+    """1M input @ $5 + 1M output @ $25 = $30."""
     usd = cost_usd(
         "claude-opus-4-7",
         {"input_tokens": 1_000_000, "output_tokens": 1_000_000},
     )
-    assert usd == Decimal("90.0000")
+    assert usd == Decimal("30.0000")
+
+
+def test_opus_4_7_rate_card_is_5_25():
+    """Regression: Opus 4.5/4.6/4.7 share Anthropic's $5 input / $25 output card.
+
+    PR #27 mistakenly populated this row with the legacy Opus 4.1 rates
+    ($15 / $75). Issue #31 caught it; this test pins the correct values
+    so it cannot silently regress again. Source of truth:
+    https://platform.claude.com/docs/en/about-claude/pricing
+    """
+    rates = PRICING["claude-opus-4-7"]
+    assert rates["input"] == Decimal("5.00"), "Opus 4.7 input must be $5/MTok"
+    assert rates["output"] == Decimal("25.00"), "Opus 4.7 output must be $25/MTok"
+    # Cache rates derive from the input rate via Anthropic's published multipliers:
+    # cache_read = 0.1x, cache_write_5m = 1.25x, cache_write_1h = 2x.
+    assert rates["cache_read"] == Decimal("0.50")
+    assert rates["cache_write_5m"] == Decimal("6.25")
+    assert rates["cache_write_1h"] == Decimal("10.00")
 
 
 def test_sonnet_proportional():
