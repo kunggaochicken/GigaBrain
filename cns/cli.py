@@ -149,10 +149,42 @@ def validate(vault):
 
 @cli.command()
 @click.option("--vault", type=click.Path(path_type=Path, exists=True), default=None)
-def reindex(vault):
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help=(
+        "Don't write; exit 0 if the bets index is fresh, exit 1 if any "
+        "bet_*.md is newer than the index (or the index is missing). "
+        "Used by `/cns` to decide whether to reindex before detect."
+    ),
+)
+def reindex(vault, check):
     """Regenerate BETS.md from active bet files."""
     root, cfg = _load_vault(vault)
     bets_dir = root / cfg.brain.bets_dir
+    out = root / cfg.brain.bets_index
+
+    if check:
+        # Freshness probe: index must exist AND be at least as new as every
+        # bet file. Missing index, or any bet_*.md mtime > index mtime, means
+        # the index is stale. We deliberately use mtime (not git status) so
+        # the heuristic works in non-git vaults too.
+        if not out.exists():
+            click.echo(f"stale: {out} does not exist")
+            raise click.exceptions.Exit(1)
+        index_mtime = out.stat().st_mtime
+        stale_bets = [
+            path.name
+            for path in sorted(bets_dir.glob("bet_*.md"))
+            if path.stat().st_mtime > index_mtime
+        ]
+        if stale_bets:
+            click.echo(f"stale: {len(stale_bets)} bet(s) newer than index: {', '.join(stale_bets)}")
+            raise click.exceptions.Exit(1)
+        click.echo(f"fresh: {out} is up-to-date")
+        return
+
     bets_with_paths = []
     for path in sorted(bets_dir.glob("bet_*.md")):
         try:
@@ -165,7 +197,6 @@ def reindex(vault):
         if bet.status == BetStatus.ACTIVE:
             bets_with_paths.append((bet, path.name))
     text = render_bets_index(bets_with_paths, cfg.roles)
-    out = root / cfg.brain.bets_index
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text + "\n", encoding="utf-8")
     click.echo(f"Wrote {out} ({len(bets_with_paths)} active bets)")

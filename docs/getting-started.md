@@ -40,33 +40,30 @@ $EDITOR Brain/Bets/bet_first.md
 
 Fill in the frontmatter and body sections. The most important field is `kill_criteria` — what observable signal would flip this bet? If you can't articulate it yet, leave the default `"unspecified — needs sparring"` and the detector will flag it for you.
 
-## 4. Regenerate the index
-
-```bash
-cns reindex
-```
-
-Open `Brain/Bets/BETS.md` to see your bet listed under its owner role.
-
-## 5. Run detection
-
-```bash
-cns detect
-```
-
-If you left `kill_criteria` as the default, you'll see one conflict in `Brain/CONFLICTS.md` flagging it for sparring. That's expected — it's the system telling you "you committed to a bet but didn't say what would change your mind."
-
-## 6. Spar
+## 4. Run the unified walk
 
 In Claude Code (or your agent):
 
 ```
-/spar
+/cns
 ```
 
-The skill walks you through your conflicts. Pick `[e] Edit` and fill in `kill_criteria` for your bet. Done — that conflict drops out of the queue and your bet's `last_reviewed` updates.
+That's it — one invocation. The `/cns` skill detects whether your bet is newer than the index, runs `cns reindex` if so, runs detection, and then chains into `/spar` to walk any conflicts. You read your bet in Obsidian and resolve in Claude Code; you never have to touch the terminal in between.
 
-## 7. (Optional) Wire into automation
+If you left `kill_criteria` as the default, the spar walk will surface it as a conflict — pick `[e] Edit` and fill it in. That conflict drops out of the queue and your bet's `last_reviewed` updates.
+
+### What if I want to run the steps individually?
+
+You can. The unified walk is a router on top of these primitives:
+
+- `cns reindex` — regenerate `Brain/Bets/BETS.md` from active bet files
+- `cns reindex --check` — exit 1 if any bet is newer than the index (used internally by `/cns`)
+- `cns detect` (or `/cns-detect`) — write `Brain/CONFLICTS.md`
+- `/spar` — walk the conflicts queue (and review queue, once `/execute` is enabled)
+
+Most users only ever run `/cns`.
+
+## 5. (Optional) Wire into automation
 
 If you have a daily report cron, see [wiring-into-automation.md](wiring-into-automation.md) for how to add `cns detect` as a post-report step so conflicts surface in your daily TL;DR automatically.
 

@@ -46,6 +46,63 @@ def test_reindex_writes_bets_index(sample_vault):
     assert "[[bet_example]]" in text
 
 
+def test_reindex_check_reports_stale_when_index_missing(sample_vault):
+    """The unified `/cns` walk uses `cns reindex --check` to decide whether to
+    reindex. A missing index must exit non-zero so the skill knows to rebuild.
+    """
+    runner = CliRunner()
+    index_file = sample_vault / "Brain/Bets/BETS.md"
+    if index_file.exists():
+        index_file.unlink()
+    result = runner.invoke(cli, ["reindex", "--vault", str(sample_vault), "--check"])
+    assert result.exit_code == 1, result.output
+    assert "stale" in result.output
+    # The check must NOT write the index — that's a side effect of the
+    # bare reindex, not the probe.
+    assert not index_file.exists()
+
+
+def test_reindex_check_reports_fresh_when_index_newer_than_bets(sample_vault):
+    """After a successful reindex, the index is at least as new as every bet
+    file, so --check must exit 0 with a `fresh:` line.
+    """
+    import os
+    import time
+
+    runner = CliRunner()
+    runner.invoke(cli, ["reindex", "--vault", str(sample_vault)])
+    index_file = sample_vault / "Brain/Bets/BETS.md"
+    assert index_file.exists()
+    # Bump the index's mtime forward to be unambiguously newer than the
+    # bet files (tmp_path can return identical mtimes on fast filesystems).
+    future = time.time() + 5
+    os.utime(index_file, (future, future))
+
+    result = runner.invoke(cli, ["reindex", "--vault", str(sample_vault), "--check"])
+    assert result.exit_code == 0, result.output
+    assert "fresh" in result.output
+
+
+def test_reindex_check_reports_stale_when_bet_modified_after_reindex(sample_vault):
+    """The whole point of `--check`: a bet edited after the last reindex must
+    produce a stale exit code so the unified walk knows to rebuild.
+    """
+    import os
+    import time
+
+    runner = CliRunner()
+    runner.invoke(cli, ["reindex", "--vault", str(sample_vault)])
+    bet_path = next((sample_vault / "Brain/Bets").glob("bet_*.md"))
+    # Touch the bet file to a time strictly newer than the index.
+    future = time.time() + 10
+    os.utime(bet_path, (future, future))
+
+    result = runner.invoke(cli, ["reindex", "--vault", str(sample_vault), "--check"])
+    assert result.exit_code == 1, result.output
+    assert "stale" in result.output
+    assert bet_path.name in result.output
+
+
 def test_detect_writes_conflicts_for_unspecified_kill(sample_vault):
     runner = CliRunner()
     result = runner.invoke(cli, ["detect", "--vault", str(sample_vault), "--today", "2026-04-25"])

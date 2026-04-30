@@ -2,6 +2,22 @@
 
 All notable changes to GigaBrain CNS are documented here. The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added — unified `/cns` walk (issue #36)
+- The `/cns` skill is now a unified walk: detect bet edits since last index,
+  reindex if stale, run `/cns-detect`, chain into `/spar`. Collapses the old
+  three-context-switch flow (Obsidian -> terminal `cns reindex` + `cns detect`
+  -> Claude Code `/spar`) into a single Claude Code invocation. Aligns with
+  CLAUDE.md's "single console / no workspace hopping" principle.
+- New CLI flag: `cns reindex --check` — freshness probe that exits 0 if the
+  bets index is newer than every `bet_*.md`, exits 1 otherwise. Prints a
+  `fresh:` or `stale: ...` summary line. Used by `/cns` to skip reindexing
+  when nothing has changed (and to surface *why* a reindex is happening when
+  it does).
+- `/cns` chains to `/cns-detect` and `/spar` rather than reimplementing them,
+  so each sub-skill remains independently usable.
+
 ## v0.4.0 (2026-04-26)
 
 ### Added — recursive sub-delegation (issue #9)
