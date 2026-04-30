@@ -22,6 +22,7 @@ import {
 import { discoverBinary, probeVersion } from "./cnsRunner";
 import { scan, ScanOptions, VaultState } from "./vaultState";
 import { GigaBrainSidebar, SIDEBAR_VIEW_TYPE } from "./views/sidebar";
+import { GigaBrainStatusBar } from "./views/statusBar";
 import { betActionBar } from "./processors/betActions";
 
 /** Vault event debounce (per architecture §2.3). */
@@ -41,6 +42,8 @@ export default class GigaBrainPlugin extends Plugin {
   private scanTimer: ReturnType<typeof setTimeout> | null = null;
   /** Tracks an in-flight scan so two events don't race a render mid-write. */
   private scanInFlight = false;
+  /** Status bar item; null until onload wires it up. */
+  private statusBar: GigaBrainStatusBar | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -77,6 +80,20 @@ export default class GigaBrainPlugin extends Plugin {
       void betActionBar(el, ctx, this);
     });
     // --- end bet action bar wiring ---
+
+    // --- status bar wiring (GIG-98) ---
+    // Health glyph that mirrors the sidebar's queues: red on any conflict,
+    // yellow on briefs/stale-bets, green when clear. Refresh rides the same
+    // 500ms vault-event debounce as the sidebar (architecture §2.3); we do
+    // NOT add another scan or debouncer — `pushStateToSidebar` also pushes
+    // here. Click toggles the sidebar via the same `activateSidebar`
+    // lifecycle the ribbon icon uses.
+    const statusEl = this.addStatusBarItem();
+    this.statusBar = new GigaBrainStatusBar(statusEl);
+    this.statusBar.setOnClick(() => {
+      void this.activateSidebar();
+    });
+    // --- end status bar wiring ---
   }
 
   onunload(): void {
@@ -161,6 +178,8 @@ export default class GigaBrainPlugin extends Plugin {
         view.setVaultState(this.vaultState, this.settings.staleAfterDays);
       }
     }
+    // Status bar refresh rides the same scan — see GIG-98 wiring in onload().
+    this.statusBar?.update(this.vaultState);
   }
 
   // -------------------------------------------------------------------------
