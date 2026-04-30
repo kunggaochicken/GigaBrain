@@ -182,6 +182,7 @@ def enforce_budgets(
     estimates: list[tuple[str, str, CostEstimate]],  # (bet_slug, role, estimate)
     budgets: ExecutionBudgets,
     historical_role_spend: dict[str, Decimal],
+    running_session_total: Decimal = Decimal("0"),
 ) -> list[BudgetDecision]:
     """Apply budget caps in order: per-run, per-session-running-total, per-role-daily.
 
@@ -192,12 +193,16 @@ def enforce_budgets(
         historical_role_spend: actual USD spend per role over the last 24h
             (caller fetches via role_spend_last_24h). Roles absent from
             this map are treated as zero spend.
+        running_session_total: USD already spent in the current session
+            before these estimates run. Used by recursive sub-dispatch
+            (issue #9) so per_session_usd_max stays global across the
+            full call tree. Defaults to zero for top-level dispatch.
 
     Returns one BudgetDecision per input estimate. The decision's
     `refusal_reason` names which cap was hit.
     """
     decisions: list[BudgetDecision] = []
-    session_total = Decimal("0")
+    session_total = running_session_total
     running_role_spend: dict[str, Decimal] = dict(historical_role_spend)
     session_capped = False
 
