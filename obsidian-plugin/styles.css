@@ -116,3 +116,13 @@
   font-size: 0.85em;
   color: var(--text-muted);
 }
+
+/* --- edit-and-rerun (reviewer notes) modal --- */
+.gigabrain-edit-rerun-modal textarea {
+  width: 100%;
+  min-height: 6em;
+  margin: 0.5em 0;
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  resize: vertical;
+}
