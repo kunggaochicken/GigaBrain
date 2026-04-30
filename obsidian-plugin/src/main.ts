@@ -24,6 +24,7 @@ import { scan, ScanOptions, VaultState } from "./vaultState";
 import { GigaBrainSidebar, SIDEBAR_VIEW_TYPE } from "./views/sidebar";
 import { GigaBrainStatusBar } from "./views/statusBar";
 import { betActionBar } from "./processors/betActions";
+import { briefActionBar } from "./processors/briefActions";
 import { BetWatcher } from "./watchers/betWatcher";
 
 /** Vault event debounce (per architecture §2.3). */
@@ -84,6 +85,16 @@ export default class GigaBrainPlugin extends Plugin {
       void betActionBar(el, ctx, this);
     });
     // --- end bet action bar wiring ---
+
+    // --- brief action bar wiring (GIG-100) ---
+    // Inject [Accept] / [Reject] / [Edit-and-rerun] / [View files] above
+    // <reviewsDir>/**/brief.md in reading mode. The processor itself
+    // validates the trigger (path shape + status:/bet: frontmatter).
+    // Architecture §3.2.
+    this.registerMarkdownPostProcessor((el, ctx) => {
+      void briefActionBar(el, ctx, this);
+    });
+    // --- end brief action bar wiring ---
 
     // --- status bar wiring (GIG-98) ---
     // Health glyph that mirrors the sidebar's queues: red on any conflict,
