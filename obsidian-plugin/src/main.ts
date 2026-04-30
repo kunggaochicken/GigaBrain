@@ -24,6 +24,7 @@ import { scan, ScanOptions, VaultState } from "./vaultState";
 import { GigaBrainSidebar, SIDEBAR_VIEW_TYPE } from "./views/sidebar";
 import { GigaBrainStatusBar } from "./views/statusBar";
 import { betActionBar } from "./processors/betActions";
+import { BetWatcher } from "./watchers/betWatcher";
 
 /** Vault event debounce (per architecture §2.3). */
 const SCAN_DEBOUNCE_MS = 500;
@@ -44,6 +45,9 @@ export default class GigaBrainPlugin extends Plugin {
   private scanInFlight = false;
   /** Status bar item; null until onload wires it up. */
   private statusBar: GigaBrainStatusBar | null = null;
+
+  /** Auto-reindex watcher (GIG-102). Owns its own 1500ms debounce. */
+  private betWatcher: BetWatcher | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -94,6 +98,37 @@ export default class GigaBrainPlugin extends Plugin {
       void this.activateSidebar();
     });
     // --- end status bar wiring ---
+
+    // --- auto-reindex wiring (GIG-102) ---
+    // Independent 1500ms debouncer scoped to `<betsDir>/bet_*.md` modify
+    // events. Runs `cns reindex --check` then conditionally `cns reindex`.
+    // Architecture §2.3 / §7.5. Deliberately separate from the 500ms
+    // sidebar scan above so a long reindex never starves the UI feedback;
+    // when reindex writes BETS.md/CONFLICTS.md, those modify events flow
+    // through the existing 500ms debouncer above and refresh both the
+    // sidebar and status bar (see pushStateToSidebar).
+    //
+    // Self-aliased `this` so the property getters below re-read the latest
+    // cnsBinaryPath / vault root each fire (both may change post-load).
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this;
+    this.betWatcher = new BetWatcher({
+      get cnsBinaryPath() {
+        return self.cnsBinaryPath;
+      },
+      get vaultRoot() {
+        return getVaultBasePath(self.app);
+      },
+      getBetsDir: () => this.settings.betsDir,
+      getDebounceMs: () => this.settings.reindexDebounceMs,
+      log: (msg) => this.log(msg),
+    });
+    this.registerEvent(
+      this.app.vault.on("modify", (file: TAbstractFile) => {
+        this.betWatcher?.handleModify(file.path);
+      }),
+    );
+    // --- end auto-reindex wiring ---
   }
 
   onunload(): void {
@@ -101,6 +136,10 @@ export default class GigaBrainPlugin extends Plugin {
       clearTimeout(this.scanTimer);
       this.scanTimer = null;
     }
+    // Stop the auto-reindex watcher: cancels its debounce timer and aborts
+    // any in-flight reindex child process via AbortSignal (GIG-102).
+    this.betWatcher?.dispose();
+    this.betWatcher = null;
     // Detach all sidebar leaves; Obsidian closes the view-type cleanly.
     this.app.workspace.detachLeavesOfType(SIDEBAR_VIEW_TYPE);
   }
