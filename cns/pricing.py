@@ -1,7 +1,7 @@
 """Pricing constants and cost computation for Claude models.
 
 Hardcoded per-model USD rates (per million tokens) for the current Claude
-lineup as of 2026-04-26.
+lineup as of 2026-04-29.
 
 NOTE: These rates need re-verification quarterly. Anthropic's published
 pricing page is the source of truth — when refreshing, also update the
@@ -16,7 +16,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TypedDict
 
-AS_OF = "2026-04-26"
+AS_OF = "2026-04-29"
 
 
 class ModelRates(TypedDict):
@@ -30,13 +30,19 @@ class ModelRates(TypedDict):
 
 
 # Rates are USD per 1_000_000 tokens.
+#
+# Opus 4.5 / 4.6 / 4.7 share a single rate card ($5 input / $25 output);
+# the legacy Opus 4.1 / Opus 4 card ($15 / $75) does NOT apply here.
+# Note: Opus 4.7 ships with a new tokenizer that can emit up to ~35% more
+# tokens for the same text vs. Opus 4.6, so realized $/request may rise
+# even though per-token rates are unchanged.
 PRICING: dict[str, ModelRates] = {
     "claude-opus-4-7": {
-        "input": Decimal("15.00"),
-        "output": Decimal("75.00"),
-        "cache_read": Decimal("1.50"),
-        "cache_write_5m": Decimal("18.75"),
-        "cache_write_1h": Decimal("30.00"),
+        "input": Decimal("5.00"),
+        "output": Decimal("25.00"),
+        "cache_read": Decimal("0.50"),
+        "cache_write_5m": Decimal("6.25"),
+        "cache_write_1h": Decimal("10.00"),
     },
     "claude-sonnet-4-6": {
         "input": Decimal("3.00"),
