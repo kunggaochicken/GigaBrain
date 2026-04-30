@@ -32,6 +32,12 @@ export interface GigaBrainSettings {
   betsDir: string;
   /** A bet is "stale" when `last_reviewed` is older than this many days. */
   staleAfterDays: number;
+  /**
+   * Debounce window in ms for the auto-reindex watcher (Phase 4 / GIG-102).
+   * 1500ms is the architecture §2.3 / §7.5 ratified default; raise to ~3000ms
+   * if the watcher feels too eager during heavy editing.
+   */
+  reindexDebounceMs: number;
 }
 
 export const DEFAULT_SETTINGS: GigaBrainSettings = {
@@ -41,6 +47,7 @@ export const DEFAULT_SETTINGS: GigaBrainSettings = {
   conflictsFile: "Brain/CONFLICTS.md",
   betsDir: "Brain/Bets",
   staleAfterDays: 30,
+  reindexDebounceMs: 1500,
 };
 
 /**
@@ -218,6 +225,23 @@ export class GigaBrainSettingTab extends PluginSettingTab {
             const n = Number.parseInt(value, 10);
             this.plugin.settings.staleAfterDays =
               Number.isFinite(n) && n > 0 ? n : 30;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-reindex debounce (ms)")
+      .setDesc(
+        "Wait this long after the last bet edit before running `cns reindex`. Default 1500. Raise if reindex storms during typing.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("1500")
+          .setValue(String(this.plugin.settings.reindexDebounceMs))
+          .onChange(async (value) => {
+            const n = Number.parseInt(value, 10);
+            this.plugin.settings.reindexDebounceMs =
+              Number.isFinite(n) && n >= 0 ? n : 1500;
             await this.plugin.saveSettings();
           }),
       );
