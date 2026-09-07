@@ -4,7 +4,7 @@ Two responsibilities:
 1. Build the per-bet dispatch plan (which bets to run, which to skip and why).
 2. Build the per-agent envelope (system prompt, tool config, related-bets snapshot).
 
-The actual Agent-tool invocation lives in skills/execute/SKILL.md; this module
+The actual Agent-tool invocation is performed by the caller; this module
 produces the materials that skill hands off.
 
 Recursive sub-delegation (issue #9). A leader-agent (e.g. the CTO running
