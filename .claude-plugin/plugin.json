@@ -1,6 +1,6 @@
 {
   "name": "cns",
-  "description": "GigaBrain CNS: a delegation console for leaders. Atomized strategic bets, automated conflict detection, role-scoped agent execution, and a unified review queue. Ships /cns, /cns-bootstrap, /cns-detect, /spar, /execute, /bet, and /role-setup skills.",
+  "description": "GigaBrain CNS: a delegation console for leaders. Atomized strategic bets, automated conflict detection, role-scoped agent execution, and a unified review queue.",
   "version": "0.4.0",
   "author": {
     "name": "James Gao"

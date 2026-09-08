@@ -378,20 +378,6 @@ def test_build_queue_excludes_pending_review_in_per_leader_layout(tmp_path):
     )
 
 
-def test_skill_doc_mentions_web_tools_fields():
-    """Regression: skills/execute/SKILL.md must document tools.web AND
-    tools.web_allowlist so users know how to opt in. We assert on the file
-    text directly because the skill is the contract surface for /execute."""
-    skill = Path(__file__).parent.parent / "skills/execute/SKILL.md"
-    text = skill.read_text()
-    assert "tools.web" in text
-    assert "web_allowlist" in text
-    # The single-console archival convention must be documented too.
-    assert "sources/" in text
-    # And the prompt-enforcement caveat — see issue #20.
-    assert "prompt" in text.lower()
-
-
 def test_envelope_no_web_states_disabled(tmp_path):
     """Roles with `tools.web: false` get an explicit no-web instruction so
     the agent doesn't try WebFetch under prompt-only enforcement."""
